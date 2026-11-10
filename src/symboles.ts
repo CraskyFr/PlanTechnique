@@ -38,6 +38,7 @@ export const LIAISONS: Record<string, TypeLiaison> = {
   masque: { calque: 'structure', nom: 'Masque (effacer le fond)', couleur: '#ffffff', epaisseur: 25, horsLegende: true },
   cable: { calque: 'elec', nom: 'Câble électrique', couleur: '#c2410c' },
   cableRj: { calque: 'reseau', nom: 'Câble réseau', couleur: '#15803d' },
+  tuyauAep: { calque: 'eau', nom: 'Tuyau eau potable', couleur: '#0891b2' },
   tuyauEf: { calque: 'eau', nom: 'Tuyau eau froide', couleur: '#2563eb' },
   tuyauEc: { calque: 'eau', nom: 'Tuyau eau chaude', couleur: '#dc2626' },
   tuyauEvac: { calque: 'eau', nom: "Tuyau d'évacuation", couleur: '#57534e', tirets: [4, 3] },
@@ -75,6 +76,8 @@ export const SYMBOLES: Record<string, Symbole> = {
   tv: { calque: 'reseau', nom: 'Prise TV', d: RECT, texte: 'TV' },
   baie: { calque: 'reseau', nom: 'Baie de brassage', d: CARRE, texte: 'BAIE' },
 
+  // AEP (adduction d'eau potable) : arrivée du réseau public, robinet d'eau potable. « EP » désigne les eaux pluviales.
+  aep: { calque: 'eau', nom: 'Eau potable', d: CERCLE, texte: 'AEP' },
   ef: { calque: 'eau', nom: 'Eau froide', d: CERCLE, texte: 'EF' },
   ec: { calque: 'eau', nom: 'Eau chaude', d: CERCLE, texte: 'EC' },
   evac: { calque: 'eau', nom: 'Évacuation', d: CERCLE, texte: 'EU' },

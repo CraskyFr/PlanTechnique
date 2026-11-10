@@ -5,6 +5,7 @@ import { CALQUES, LIAISONS, SYMBOLES } from './symboles.ts';
 import { masqueMurs, ouvertures, rectangles } from './detection.ts';
 import { echelleDepuisCotes, effacerCotes } from './cotes.ts';
 import { pieces as trouverPieces } from './pieces.ts';
+import { pdfDepuisJpeg } from './pdf.ts';
 import { Historique, aimanter, echelleDepuis, etageVide, lireProjet, longueur, nomenclature, type Etage, type Liaison, type Objet, type Point, type Props } from './etat.ts';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -696,24 +697,43 @@ const nomFichier = (extension: string) => `plan-${projet.nom.replace(/[^\p{L}\p{
 
 // Image de l'étage affiché, en pixels du plan. Seuls les calques visibles y figurent :
 // un export par corps de métier se fait en cochant/décochant.
-function imagePlan() {
+function imagePlan(pixelRatio: number) {
   selectionner(null);
   reperes.destroyChildren();
+  annulerAttente();
   const echelle = stage.scale();
   const pos = stage.position();
   stage.scale({ x: 1, y: 1 });
   stage.position({ x: 0, y: 0 });
   const r = layer.getClientRect();
-  const url = r.width && r.height ? stage.toDataURL({ ...r, pixelRatio: 2 }) : null;
+  // Sur fond blanc : en JPEG, les zones transparentes (autour de la légende) sortiraient noires.
+  let canvas: HTMLCanvasElement | null = null;
+  if (r.width && r.height) {
+    const rendu = stage.toCanvas({ ...r, pixelRatio });
+    canvas = document.createElement('canvas');
+    canvas.width = rendu.width;
+    canvas.height = rendu.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(rendu, 0, 0);
+  }
   stage.scale(echelle);
   stage.position(pos);
-  if (!url) alert('Rien à exporter.');
-  return url ? { url, largeur: r.width, hauteur: r.height } : null;
+  if (!canvas) alert('Rien à exporter.');
+  return canvas ? { canvas, largeur: r.width, hauteur: r.height } : null;
 }
 
-function exporterPng() {
-  const plan = imagePlan();
-  if (plan) telecharger(plan.url, nomFichier('png'));
+// PDF A4 de l'étage affiché, calques visibles seulement. Pour un plan à l'échelle exacte : « Imprimer à l'échelle ».
+async function exporterPdf() {
+  const plan = imagePlan(1.5); // ~300 dpi sur une A4 pour un plan Kazaplan importé
+  if (!plan) return;
+  const jpeg = await new Promise<Blob | null>((ok) => plan.canvas.toBlob(ok, 'image/jpeg', 0.9));
+  if (!jpeg) return alert("Impossible de générer l'image du plan.");
+  const pdf = pdfDepuisJpeg(new Uint8Array(await jpeg.arrayBuffer()), plan.canvas.width, plan.canvas.height);
+  const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
+  telecharger(url, nomFichier('pdf'));
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
 function exporterCsv() {
@@ -737,7 +757,7 @@ async function imprimer() {
   const saisie = prompt("Échelle d'impression ? Saisissez 50 pour du 1:50 (1 cm sur le papier = 50 cm réels).", '50');
   if (saisie === null) return;
   const n = nombre(saisie.replace(/^\s*1\s*[:/]/, ''), 50);
-  const plan = imagePlan();
+  const plan = imagePlan(2);
   if (!plan) return;
   const mm = (px: number) => (px * projet.echelle! * 1000) / n;
   const l = mm(plan.largeur);
@@ -746,7 +766,7 @@ async function imprimer() {
   if (!format) return alert(`À 1:${n}, le plan mesure ${Math.round(l)} × ${Math.round(h)} mm et dépasse l'A3. Essayez une échelle plus petite, par exemple 1:${n * 2}.`);
   $('page').textContent = `@page { size: ${format.page}; margin: 10mm; }`;
   const img = $<HTMLImageElement>('impression-img');
-  img.src = plan.url;
+  img.src = plan.canvas.toDataURL('image/png');
   img.style.width = `${l}mm`;
   $('impression-titre').textContent = `${projet.nom} — échelle 1:${n} — ${format.page.replace('landscape', 'paysage')} — imprimer à 100 %, sans « ajuster à la page »`;
   await img.decode();
@@ -754,12 +774,15 @@ async function imprimer() {
 }
 
 // ---------- Interface ----------
+// La structure, issue du plan importé, est verrouillée d'office : on ne déplace pas un mur en posant une prise.
+const VERROUILLES = ['structure'];
+for (const id of VERROUILLES) groupes[id].listening(false);
 $('calques').innerHTML = [{ id: 'fond', nom: 'Fond de plan', couleur: '#6b7280' }, ...CALQUES, ...COTES_AUTO, { id: 'legende', nom: 'Légende', couleur: '#6b7280' }]
   .map(
     (c) =>
       `<div class="calque"><label style="color:${c.couleur}"><input type="checkbox" data-calque="${c.id}" checked> ${c.nom}</label>` +
       // Fond et légende ne sont jamais sélectionnables : pas de verrou à proposer.
-      (couleurs[c.id] ? `<label title="Verrouiller : les éléments de ce calque ne peuvent plus être sélectionnés ni déplacés"><input type="checkbox" data-verrou="${c.id}"> 🔒</label>` : '') +
+      (couleurs[c.id] ? `<label title="Verrouiller : les éléments de ce calque ne peuvent plus être sélectionnés ni déplacés"><input type="checkbox" data-verrou="${c.id}"${VERROUILLES.includes(c.id) ? ' checked' : ''}> 🔒</label>` : '') +
       `</div>`,
   )
   .join('');
@@ -839,7 +862,7 @@ surFichier('f-fond', importerFond);
 surFichier('f-projet', ouvrir);
 
 $('b-sauver').onclick = enregistrer;
-$('b-png').onclick = exporterPng;
+$('b-pdf').onclick = exporterPdf;
 $('b-csv').onclick = exporterCsv;
 $('b-imprimer').onclick = imprimer;
 
