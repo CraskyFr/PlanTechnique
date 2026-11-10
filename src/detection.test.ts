@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { masqueMurs, ouvertures, rectangles, type Image } from './detection.ts';
+import { blanchir, masqueMurs, ouvertures, rectangles, type Image } from './detection.ts';
 
 test('pièce de synthèse : murs, fenêtre vitrée et porte avec son battant', () => {
   const img: Image = { data: new Uint8Array(400 * 240 * 4).fill(255), width: 400, height: 240 };
@@ -29,6 +29,13 @@ test('pièce de synthèse : murs, fenêtre vitrée et porte avec son battant', (
     { x: 200, y: 50, largeur: 100, horizontal: true, nature: 'fenetre', cote: -1, gond: 'debut' },
     { x: 200, y: 190, largeur: 60, horizontal: true, nature: 'porte', cote: -1, gond: 'fin' },
   ]);
+});
+
+test('blanchir : gris clairs en blanc, murs, traits de meubles et couleurs intacts', () => {
+  const px = [[232, 232, 232], [253, 253, 253], [85, 85, 85], [160, 160, 160], [76, 160, 130], [214, 51, 171]];
+  const img: Image = { data: new Uint8Array(px.flatMap((p) => [...p, 255])), width: 6, height: 1 };
+  blanchir(img);
+  assert.deepEqual([...img.data], [255, 255, 255, 255, 255, 255, 255, 255, 85, 85, 85, 255, 160, 160, 160, 255, 76, 160, 130, 255, 214, 51, 171, 255]);
 });
 
 test("pas de murs pleins : rien n'est reconnu", () => {

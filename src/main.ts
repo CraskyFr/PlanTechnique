@@ -2,7 +2,7 @@ import Konva from 'konva';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { CALQUES, LIAISONS, SYMBOLES } from './symboles.ts';
-import { masqueMurs, ouvertures, rectangles } from './detection.ts';
+import { blanchir, masqueMurs, ouvertures, rectangles } from './detection.ts';
 import { echelleDepuisCotes, effacerCotes } from './cotes.ts';
 import { pieces as trouverPieces } from './pieces.ts';
 import { pdfDepuisJpeg } from './pdf.ts';
@@ -548,7 +548,7 @@ function poserFond(dataUrl: string, nouveau = false) {
     stage.position({ x: (stage.width() - img.width * k) / 2, y: (stage.height() - img.height * k) / 2 });
     if (nouveau) projet.echelle = null; // nouvelle image : l'ancienne échelle ne s'applique plus
     rendre();
-    if (nouveau) reconnaitrePlan();
+    if (nouveau) nettoyerFond(reconnaitrePlan() === true);
   };
   img.onerror = () => alert("Impossible de lire l'image du plan.");
   img.src = dataUrl;
@@ -654,15 +654,31 @@ function reconnaitrePlan() {
     projet.objets.push({ id: nouvelId(), type: o.nature, x: o.x, y: o.y, rot, props });
   }
   // Plan Kazaplan (cotes lues) : ses cotes violettes sont effacées du fond, l'appli redessine les siennes.
-  if (lue) {
-    effacerCotes(image);
-    ctx.putImageData(image, 0, 0);
-    groupes.fond.findOne<Konva.Image>('Image')?.image(canvas);
-    projet.fond = canvas.toDataURL('image/png');
-  }
   valider();
   rendre();
   majCoords();
+  return !!lue; // cotes Kazaplan lues : nettoyerFond les effacera
+}
+
+// Fond du plan importé : gris clairs passés en blanc (seuls murs, meubles et textes restent), et cotes violettes
+// effacées s'il s'agit d'un plan Kazaplan, puisque l'appli redessine les siennes.
+function nettoyerFond(cotesKazaplan: boolean) {
+  const noeud = groupes.fond.findOne<Konva.Image>('Image');
+  const source = noeud?.image() as HTMLImageElement | HTMLCanvasElement | undefined;
+  if (!noeud || !source) return;
+  const canvas = document.createElement('canvas');
+  canvas.width = source.width;
+  canvas.height = source.height;
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.drawImage(source, 0, 0);
+  const image = ctx.getImageData(0, 0, canvas.width, canvas.height);
+  if (cotesKazaplan) effacerCotes(image);
+  blanchir(image);
+  ctx.putImageData(image, 0, 0);
+  noeud.image(canvas);
+  projet.fond = canvas.toDataURL('image/png');
 }
 
 // ---------- Fichiers ----------

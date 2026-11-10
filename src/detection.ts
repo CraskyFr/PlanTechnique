@@ -13,6 +13,17 @@ export type Ouverture = {
   gond: 'debut' | 'fin'; // porte : extrémité de l'ouverture qui porte les gonds (début = gauche ou haut)
 };
 
+/**
+ * Passe en blanc les gris clairs (fond extérieur, quadrillage, sols teintés) ; murs, meubles et textes,
+ * plus sombres ou colorés, restent intacts. À faire après la reconnaissance : les vitrages peuvent être très pâles.
+ */
+export function blanchir({ data }: Image, seuil = 210): void {
+  for (let i = 0; i < data.length; i += 4) {
+    const max = Math.max(data[i], data[i + 1], data[i + 2]), min = Math.min(data[i], data[i + 1], data[i + 2]);
+    if (max - min < 12 && min >= seuil) data[i] = data[i + 1] = data[i + 2] = 255;
+  }
+}
+
 /** Masque des pixels « mur » : la teinte neutre sombre la plus fréquente, bords d'anticrénelage compris. */
 export function masqueMurs({ data, width, height }: Image): Uint8Array | null {
   const n = width * height;
