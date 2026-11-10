@@ -17,7 +17,7 @@ export const CALQUES = [
   { id: 'reseau', nom: 'Réseau', couleur: '#15803d' },
   { id: 'eau', nom: 'Eau', couleur: '#1d4ed8' },
   { id: 'chauffage', nom: 'Chauffage', couleur: '#b91c1c' },
-  { id: 'cotes', nom: 'Cotes', couleur: '#4b5563' },
+  { id: 'cotes', nom: 'Cotes manuelles', couleur: '#4b5563' },
 ];
 
 // Câbles et tuyaux : polylignes. Les clés ne doivent pas reprendre celles de SYMBOLES (même palette d'outils).

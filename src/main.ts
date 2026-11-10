@@ -99,11 +99,7 @@ function changerEtage(i: number) {
 
 // Cotes calculées automatiquement à partir de la structure, à la manière des cotes violettes de Kazaplan.
 const VIOLET = '#cc2aa6';
-const COTES_AUTO = [
-  { id: 'cotesPieces', nom: 'Cotes des pièces', couleur: VIOLET },
-  { id: 'cotesOuvertures', nom: 'Cotes portes et fenêtres', couleur: VIOLET },
-  { id: 'cotesCloisons', nom: 'Cotes des cloisons', couleur: VIOLET },
-];
+const COTES_AUTO = [{ id: 'cotesAuto', nom: 'Cotes automatiques', couleur: VIOLET }];
 
 // ---------- Canevas ----------
 const conteneur = $<HTMLDivElement>('plan');
@@ -184,22 +180,23 @@ function rendre() {
 
 // ---------- Cotes automatiques ----------
 type Trait = [number, number, number, number]; // x0, y0, x1, y1 en pixels du plan
-let cotesCache: { cle: string; traits: Record<string, Trait[]> } | null = null;
+let cotesCache: { cle: string; traits: Trait[] } | null = null;
 
+// Pièces, portes, fenêtres et cloisons, toutes dans le calque « Cotes automatiques ».
 function rendreCotesAuto() {
-  for (const c of COTES_AUTO) groupes[c.id].destroyChildren();
+  groupes.cotesAuto.destroyChildren();
   if (!projet.echelle) return; // sans échelle, pas de centimètres à afficher
   const cloisons = projet.liaisons.filter((l) => l.type === 'cloison');
   const ouvertures = projet.objets.filter((o) => SYMBOLES[o.type].mural);
   // Recalcul seulement quand la structure change : poser une prise ne refait pas la détection des pièces.
   const cle = JSON.stringify([projet.echelle, cloisons, ouvertures]);
   if (cotesCache?.cle !== cle) cotesCache = { cle, traits: calculerCotes(cloisons, ouvertures) };
-  for (const [id, traits] of Object.entries(cotesCache.traits)) for (const t of traits) dessinerCote(groupes[id], t);
+  for (const t of cotesCache.traits) dessinerCote(groupes.cotesAuto, t);
 }
 
-function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Record<string, Trait[]> {
+function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Trait[] {
   const e = projet.echelle!;
-  const traits: Record<string, Trait[]> = { cotesPieces: [], cotesOuvertures: [], cotesCloisons: [] };
+  const traits: Trait[] = [];
   if (!cloisons.length) return traits;
   const epaisseur = (l: Liaison) => nombre(l.props.epaisseur, LIAISONS.cloison.epaisseur!) / 100 / e;
   const largeur = (o: Objet) => nombre(o.props.largeur, SYMBOLES[o.type].mural!) / 100 / e;
@@ -286,8 +283,8 @@ function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Record<string,
     // Pièces d'au moins 0,5 m² ; rayon de 3 px : les murs reconnus sont des tranches séparées de quelques pixels.
     const resultat = trouverPieces(murs, W, H, Math.round(0.5 / e / e), 3);
     etiquettes = resultat.etiquettes;    for (const { largeur: l, hauteur: h } of resultat.pieces) {
-      traits.cotesPieces.push([ox + l.b0, oy + l.a + 0.5, ox + l.b1, oy + l.a + 0.5]);
-      traits.cotesPieces.push([ox + h.a + 0.5, oy + h.b0, ox + h.a + 0.5, oy + h.b1]);
+      traits.push([ox + l.b0, oy + l.a + 0.5, ox + l.b1, oy + l.a + 0.5]);
+      traits.push([ox + h.a + 0.5, oy + h.b0, ox + h.a + 0.5, oy + h.b1]);
     }
   }
   const lire = (tab: Uint8Array | Int32Array, x: number, y: number) => {
@@ -308,12 +305,12 @@ function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Record<string,
     const jx = o.x + ux * (L / 2 + 2), jy = o.y + uy * (L / 2 + 2);
     let demi = 0;
     while (demi < 1 / e && lire(murs, jx - uy * demi, jy + ux * demi) === 1 && lire(murs, jx + uy * demi, jy - ux * demi) === 1) demi++;
-    traits.cotesOuvertures.push(aCote(o.x, o.y, ux, uy, L, demi));
+    traits.push(aCote(o.x, o.y, ux, uy, L, demi));
   }
 
   for (const [ax, ay, bx, by, d] of obliques) {
     const L = Math.hypot(bx - ax, by - ay);
-    if (L * e >= 0.3) traits.cotesCloisons.push(aCote((ax + bx) / 2, (ay + by) / 2, (bx - ax) / L, (by - ay) / L, L, d));
+    if (L * e >= 0.3) traits.push(aCote((ax + bx) / 2, (ay + by) / 2, (bx - ax) / L, (by - ay) / L, L, d));
   }
   // Cloisons : les morceaux alignés qui se touchent (mur reconnu en plusieurs tranches) forment une seule cloison.
   const rects = morceaux.map((r) => ({ ...r }));
@@ -328,7 +325,7 @@ function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Record<string,
       }
   for (const r of rects) {
     const L = r.horizontal ? r.x1 - r.x0 : r.y1 - r.y0, demi = (r.horizontal ? r.y1 - r.y0 : r.x1 - r.x0) / 2;
-    if (L * e >= 0.3) traits.cotesCloisons.push(aCote((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, +r.horizontal, +!r.horizontal, L, demi));
+    if (L * e >= 0.3) traits.push(aCote((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, +r.horizontal, +!r.horizontal, L, demi));
   }
   return traits;
 }

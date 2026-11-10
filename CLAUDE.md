@@ -19,7 +19,7 @@ npm test       # node --test (Node ≥ 22.18, exécute le TS directement)
 - `src/etat.ts` — modèle pur sans DOM : types, validation des fichiers ouverts, échelle, historique. Testé par `etat.test.ts`.
 - `src/detection.ts` — reconnaissance pure (sans DOM) des murs, portes et fenêtres sur l'image du plan : masque de la teinte des murs, découpe en rectangles, ouvertures entre murs alignés. Mise au point sur un export Kazaplan A4 (image raster, murs gris pleins orthogonaux). Testé par `detection.test.ts`.
 - `src/cotes.ts` — échelle automatique : lit les cotes magenta horizontales de Kazaplan (modèles de chiffres `MODELES` propres à cette police) et divise chaque valeur par la distance entre les deux murs qui l'encadrent ; ne retient que les cotes qui concordent à 1,5 %. Repli : saisie de la largeur hors tout.
-- `src/pieces.ts` — pièces (zones fermées) d'une grille de murs et leurs traversées mur à mur. `main.ts` (`calculerCotes`) rastérise cloisons + ouvertures refermées, puis dessine les cotes automatiques violettes (calques Cotes des pièces / portes et fenêtres / cloisons), recalculées seulement quand la structure change.
+- `src/pieces.ts` — pièces (zones fermées) d'une grille de murs et leurs traversées mur à mur. `main.ts` (`calculerCotes`) rastérise cloisons + ouvertures refermées, puis dessine les cotes automatiques violettes (calque « Cotes automatiques » ; le calque « Cotes manuelles » contient celles tracées à la main), recalculées seulement quand la structure change.
 - `src/main.ts` — interface et canevas Konva. L'état `projet` est la source de vérité ; `rendre()` reconstruit les nœuds.
 
 Les imports gardent l'extension `.ts` (nécessaire pour que Node lance les tests sans build).
