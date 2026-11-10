@@ -114,7 +114,9 @@ const reperes = new Konva.Group({ listening: false });
 const tr = new Konva.Transformer({ resizeEnabled: false, rotationSnaps: [0, 45, 90, 135, 180, 225, 270, 315], rotationSnapTolerance: 8 });
 // Symbole en attente de confirmation : aperçu + bouton ✓ (seul élément cliquable du groupe).
 const attente = new Konva.Group();
-layer.add(reperes, attente, tr);
+// Fantôme : le symbole suit la souris avant le clic, déjà plaqué au mur comme il sera posé.
+const fantome = new Konva.Group({ listening: false, opacity: 0.4 });
+layer.add(reperes, fantome, attente, tr);
 
 new ResizeObserver(() => stage.size({ width: conteneur.clientWidth, height: conteneur.clientHeight })).observe(conteneur);
 
@@ -130,7 +132,8 @@ function noeudSymbole(o: Objet): Konva.Group {
   g.add(new Konva.Rect({ width: B, height: B, fill: 'transparent' })); // zone cliquable pleine
   if (s.masque) g.add(new Konva.Path({ data: s.masque, fill: '#fff' }));
   g.add(new Konva.Path({ data: s.d, stroke: couleur, strokeWidth: (1.5 * k) / sc, lineCap: 'round', lineJoin: 'round' }));
-  if (s.texte) g.add(new Konva.Text({ text: s.texte, width: B, height: B, align: 'center', verticalAlign: 'middle', fontSize: 7, fontStyle: 'bold', fill: couleur }));
+  // Texte contre-pivoté : « RJ45 » reste lisible quel que soit le mur contre lequel la prise est plaquée.
+  if (s.texte) g.add(new Konva.Text({ x: B / 2, y: B / 2, offset: { x: B / 2, y: B / 2 }, rotation: -o.rot, text: s.texte, width: B, height: B, align: 'center', verticalAlign: 'middle', fontSize: 7, fontStyle: 'bold', fill: couleur }));
   const texte = [o.props.repere, o.props.hauteur && `h${o.props.hauteur}`].filter(Boolean).join(' · ');
   // Étiquette contre-pivotée : elle reste horizontale, sous le symbole, quelle que soit sa rotation.
   if (texte) g.add(new Konva.Text({ x: B / 2, y: B / 2, rotation: -o.rot, width: 80, offset: { x: 40, y: -(B / 2 + 1) }, align: 'center', text: texte, fontSize: 5, fontStyle: 'bold', fill: couleur }));
@@ -162,9 +165,12 @@ function rendre() {
   for (const o of projet.objets) {
     const g = noeudSymbole(o);
     g.setAttrs({ name: 'objet', id: String(o.id), draggable: true });
-    g.on('dragend transformend', () => {
+    g.on('dragend transformend', (ev) => {
       Object.assign(o, { x: g.x(), y: g.y(), rot: g.rotation() });
       aimanterObjet(o);
+      // Une prise glissée le long d'un mur y reste plaquée ; une rotation à la poignée est respectée.
+      const s = SYMBOLES[o.type];
+      if (ev.type === 'dragend' && !s.mural && !s.libre) plaquerAuMur(o);
       valider();
       setTimeout(rendre);
     });
@@ -384,7 +390,7 @@ function majStatut() {
     : estLiaison(outil)
       ? `Tracé : ${LIAISONS[outil].nom} — cliquez les points (Maj = horizontal/vertical), re-cliquez le dernier point ou Entrée pour terminer`
       : outil
-        ? `Placement : ${SYMBOLES[outil].nom} — cliquez sur le plan, puis sur ✓ (ou Entrée) pour l'ajouter ; Échap pour arrêter`
+        ? `Pose : ${SYMBOLES[outil].nom}${SYMBOLES[outil].libre || SYMBOLES[outil].mural ? '' : ' (se plaque au mur le plus proche)'} — cliquez, puis ✓, clic sur l'aperçu ou Entrée pour valider · R pivote · Échap annule`
         : 'Sélection — glisser pour déplacer, R pour pivoter, Suppr pour effacer, molette pour zoomer';
   conteneur.style.cursor = calib || outil ? 'crosshair' : 'default';
   for (const b of $('palette').querySelectorAll('button')) b.classList.toggle('actif', b.dataset.type === outil);
@@ -394,21 +400,67 @@ function changerMode(nouvelOutil: string | null, calibration = false) {
   outil = nouvelOutil;
   calib = calibration ? [] : null;
   trace = [];
+  rotPose = 0;
   reperes.destroyChildren();
   annulerAttente();
+  majFantome(null);
   majStatut();
 }
 
-// ---------- Pose d'un symbole : clic = aperçu, ✓ (ou Entrée) = ajout ----------
+// ---------- Pose d'un symbole : clic = aperçu, ✓ / clic sur l'aperçu / Entrée = ajout ----------
 let enAttente: Objet | null = null;
+let rotPose = 0; // rotation choisie avec R pour les symboles posés librement (point lumineux, vanne)
+
+// L'objet tel qu'il serait posé en p : porte et fenêtre sur la cloison, prise, interrupteur, RJ45… contre le mur.
+function objetPose(p: Point): Objet {
+  const s = SYMBOLES[outil!];
+  const o: Objet = { id: 0, type: outil!, x: p.x, y: p.y, rot: rotPose, props: s.hauteur ? { hauteur: String(s.hauteur) } : {} };
+  if (s.mural) aimanterObjet(o);
+  else if (!s.libre) plaquerAuMur(o);
+  return o;
+}
+
+// Contre la face du mur le plus proche (s'il est à moins d'un symbole et demi), le haut du symbole tourné vers le mur.
+function plaquerAuMur(o: Objet) {
+  const murs = projet.liaisons.filter((l) => l.type === 'cloison').map((l) => ({ points: l.points, demi: styleLiaison('cloison', l.props).strokeWidth / 2 }));
+  // Sous une fenêtre aussi (prise sous allège) : elle prolonge le mur, à l'épaisseur du mur qui la porte.
+  const e = projet.echelle;
+  if (e)
+    for (const f of projet.objets.filter((f) => f.type === 'fenetre')) {
+      const L = nombre(f.props.largeur, SYMBOLES.fenetre.mural!) / 100 / e / 2, a = (f.rot * Math.PI) / 180;
+      const [ux, uy] = [Math.cos(a), Math.sin(a)];
+      const tableau = aimanter({ x: f.x + ux * (L + 2), y: f.y + uy * (L + 2) }, murs.map((m) => m.points), 3);
+      murs.push({ points: [f.x - ux * L, f.y - uy * L, f.x + ux * L, f.y + uy * L], demi: tableau ? murs[tableau.indice].demi : 0.1 / e });
+    }
+  const a = aimanter(o, murs.map((m) => m.points), Infinity);
+  if (!a) return;
+  const k = projet.taille, demi = murs[a.indice].demi;
+  if (Math.hypot(o.x - a.x, o.y - a.y) > demi + 1.5 * B * k) return; // loin des murs : posé tel quel
+  const rad = (a.angle * Math.PI) / 180;
+  let [nx, ny] = [-Math.sin(rad), Math.cos(rad)]; // normale au mur, orientée du côté du clic
+  if ((o.x - a.x) * nx + (o.y - a.y) * ny < 0) [nx, ny] = [-nx, -ny];
+  const recul = demi + (B / 2) * k;
+  Object.assign(o, { x: a.x + nx * recul, y: a.y + ny * recul, rot: ((Math.atan2(-nx, ny) * 180) / Math.PI + 360) % 360 });
+}
+
+function majFantome(p: Point | null) {
+  fantome.destroyChildren();
+  if (p && outil && !estLiaison(outil) && !calib && !enAttente) fantome.add(noeudSymbole(objetPose(p)));
+}
 
 function proposer(p: Point) {
-  const o: Objet = { id: 0, type: outil!, x: p.x, y: p.y, rot: 0, props: {} };
-  aimanterObjet(o);
-  enAttente = o;
+  enAttente = objetPose(p);
+  majFantome(null);
+  afficherAttente();
+}
+
+function afficherAttente() {
   attente.destroyChildren();
-  const apercu = noeudSymbole(o);
-  apercu.setAttrs({ opacity: 0.5, listening: false });
+  if (!enAttente) return;
+  const apercu = noeudSymbole(enAttente);
+  apercu.setAttrs({ name: 'valider', opacity: 0.6 }); // cliquer l'aperçu le valide aussi : une cible plus grande que ✓
+  apercu.on('mouseenter', () => (conteneur.style.cursor = 'pointer'));
+  apercu.on('mouseleave', majStatut);
   attente.add(apercu);
   // Bouton de taille constante à l'écran, en haut à droite de l'aperçu.
   const r = 11 / stage.scaleX(), boite = apercu.getClientRect({ relativeTo: layer });
@@ -544,7 +596,9 @@ stage.on('mousemove', (e) => {
   majCoords();
   const p = layer.getRelativePointerPosition();
   if (p && estLiaison(outil) && trace.length) majApercu(pointTrace(p, e.evt.shiftKey));
+  majFantome(p);
 });
+stage.on('mouseleave', () => majFantome(null));
 
 // ---------- Fond de plan ----------
 function poserFond(dataUrl: string, nouveau = false) {
@@ -933,6 +987,7 @@ addEventListener('keydown', (e) => {
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) (e.preventDefault(), appliquer(hist.refaire()));
   else if (ctrl && k === 'z') (e.preventDefault(), appliquer(hist.annuler()));
   else if (k === '0' && !ctrl) ajusterVue();
+  else if (k === 'escape' && enAttente) annulerAttente(); // 1er Échap : retire l'aperçu, l'outil reste actif
   else if (k === 'escape') {
     changerMode(null);
     selectionner(null);
@@ -951,6 +1006,12 @@ addEventListener('keydown', (e) => {
     else o.props.miroir = '1';
     valider();
     rendre();
+  } else if (k === 'r' && !ctrl && outil && !estLiaison(outil)) {
+    // Pendant la pose : pivote l'aperçu (et les suivants) de 90° ; porte et fenêtre basculent de l'autre côté du mur.
+    const pas = SYMBOLES[outil].mural ? 180 : 90;
+    rotPose = (rotPose + pas) % 360;
+    if (enAttente) (enAttente.rot = (enAttente.rot + pas) % 360), afficherAttente();
+    majFantome(layer.getRelativePointerPosition());
   } else if (k === 'r' && !ctrl) {
     const o = projet.objets.find((o) => o.id === selection);
     if (!o) return;

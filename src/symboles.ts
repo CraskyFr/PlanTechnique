@@ -9,6 +9,8 @@ export type Symbole = {
   mural?: number; // élément de mur (porte, fenêtre) : largeur par défaut en cm, dessiné à l'échelle et aimanté aux cloisons
   ancre?: number; // ordonnée de la ligne du mur dans la boîte (12 par défaut)
   masque?: string; // tracé rempli de blanc sous le symbole, pour « ouvrir » le mur
+  libre?: boolean; // posé où l'on clique ; sinon plaqué contre le mur le plus proche, le haut du symbole côté mur
+  hauteur?: number; // hauteur de pose proposée à la pose, en cm (modifiable dans Propriétés)
 };
 
 export const CALQUES = [
@@ -57,23 +59,26 @@ export const SYMBOLES: Record<string, Symbole> = {
   // Ouverture sans menuiserie : seulement les deux tableaux ; sépare les pièces pour les cotes.
   passage: { calque: 'structure', nom: 'Passage', d: 'M0 8 V16 M24 8 V16', mural: 140 },
 
-  prise16: { calque: 'elec', nom: 'Prise 16 A', d: 'M5 16 A7 7 0 0 1 19 16 M12 9 V3' },
+  // Hauteurs usuelles (axe du boîtier) : prises 30 cm, commandes 110 cm, thermostat 150 cm.
+  prise16: { calque: 'elec', nom: 'Prise 16 A', d: 'M5 16 A7 7 0 0 1 19 16 M12 9 V3', hauteur: 30 },
   prise32: { calque: 'elec', nom: 'Prise 32 A', d: 'M3 15 A9 9 0 0 1 21 15 M12 6 V1', texte: '32' },
-  inter: { calque: 'elec', nom: 'Interrupteur', d: 'M5 17 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0 M9.9 14.7 L18 5 L21 7.5' },
+  inter: { calque: 'elec', nom: 'Interrupteur', d: 'M5 17 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0 M9.9 14.7 L18 5 L21 7.5', hauteur: 110 },
   vaetvient: {
     calque: 'elec',
     nom: 'Va-et-vient',
     d: 'M9 12 a3 3 0 1 0 6 0 a3 3 0 1 0 -6 0 M13.9 9.7 L19 3.5 L22 6 M10.1 14.3 L5 20.5 L2 18',
+    hauteur: 110,
   },
   lumiere: {
     calque: 'elec',
     nom: 'Point lumineux',
     d: 'M4 12 a8 8 0 1 0 16 0 a8 8 0 1 0 -16 0 M6.3 6.3 L17.7 17.7 M17.7 6.3 L6.3 17.7',
+    libre: true, // au plafond
   },
   tableau: { calque: 'elec', nom: 'Tableau électrique', d: 'M3 5 H21 V19 H3 Z M3 19 L21 5' },
 
-  rj45: { calque: 'reseau', nom: 'Prise RJ45', d: RECT, texte: 'RJ45' },
-  tv: { calque: 'reseau', nom: 'Prise TV', d: RECT, texte: 'TV' },
+  rj45: { calque: 'reseau', nom: 'Prise RJ45', d: RECT, texte: 'RJ45', hauteur: 30 },
+  tv: { calque: 'reseau', nom: 'Prise TV', d: RECT, texte: 'TV', hauteur: 30 },
   baie: { calque: 'reseau', nom: 'Baie de brassage', d: CARRE, texte: 'BAIE' },
 
   // AEP (adduction d'eau potable) : arrivée du réseau public, robinet d'eau potable. « EP » désigne les eaux pluviales.
@@ -82,10 +87,10 @@ export const SYMBOLES: Record<string, Symbole> = {
   ec: { calque: 'eau', nom: 'Eau chaude', d: CERCLE, texte: 'EC' },
   evac: { calque: 'eau', nom: 'Évacuation', d: CERCLE, texte: 'EU' },
   chauffeeau: { calque: 'eau', nom: 'Chauffe-eau', d: CARRE, texte: 'CE' },
-  vanne: { calque: 'eau', nom: 'Vanne', d: 'M4 6 L20 18 V6 L4 18 Z' },
+  vanne: { calque: 'eau', nom: 'Vanne', d: 'M4 6 L20 18 V6 L4 18 Z', libre: true }, // sur un tuyau
 
   radiateur: { calque: 'chauffage', nom: 'Radiateur', d: 'M2 8 H22 V16 H2 Z M7 8 V16 M12 8 V16 M17 8 V16' },
   pac: { calque: 'chauffage', nom: 'Pompe à chaleur', d: CARRE, texte: 'PAC' },
   chaudiere: { calque: 'chauffage', nom: 'Chaudière', d: CARRE, texte: 'CH' },
-  thermostat: { calque: 'chauffage', nom: 'Thermostat', d: CERCLE, texte: 'T' },
+  thermostat: { calque: 'chauffage', nom: 'Thermostat', d: CERCLE, texte: 'T', hauteur: 150 },
 };

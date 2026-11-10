@@ -30,10 +30,13 @@ export function longueur(points: number[]): number {
   return total;
 }
 
-/** Projette p sur le segment de polyligne le plus proche (à moins de `seuil`) ; angle du segment en degrés. */
-export function aimanter(p: Point, polylignes: number[][], seuil: number): (Point & { angle: number }) | null {
-  let meilleur: (Point & { angle: number }) | null = null;
-  for (const pts of polylignes)
+/**
+ * Projette p sur le segment de polyligne le plus proche (à moins de `seuil`) ;
+ * angle du segment en degrés et indice de la polyligne touchée.
+ */
+export function aimanter(p: Point, polylignes: number[][], seuil: number): (Point & { angle: number; indice: number }) | null {
+  let meilleur: (Point & { angle: number; indice: number }) | null = null;
+  for (const [indice, pts] of polylignes.entries())
     for (let i = 2; i < pts.length; i += 2) {
       const ax = pts[i - 2], ay = pts[i - 1], dx = pts[i] - ax, dy = pts[i + 1] - ay;
       const l2 = dx * dx + dy * dy;
@@ -43,7 +46,7 @@ export function aimanter(p: Point, polylignes: number[][], seuil: number): (Poin
       const d = Math.hypot(p.x - x, p.y - y);
       if (d <= seuil) {
         seuil = d;
-        meilleur = { x, y, angle: (Math.atan2(dy, dx) * 180) / Math.PI };
+        meilleur = { x, y, angle: (Math.atan2(dy, dx) * 180) / Math.PI, indice };
       }
     }
   return meilleur;

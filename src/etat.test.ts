@@ -24,10 +24,11 @@ test('longueur : somme des segments de la polyligne', () => {
 
 test('aimanter : projection sur le segment le plus proche, rien au-delà du seuil', () => {
   const murs = [[0, 0, 100, 0, 100, 100]];
-  assert.deepEqual(aimanter({ x: 40, y: 8 }, murs, 10), { x: 40, y: 0, angle: 0 });
-  assert.deepEqual(aimanter({ x: 95, y: 50 }, murs, 10), { x: 100, y: 50, angle: 90 });
-  assert.deepEqual(aimanter({ x: -5, y: 3 }, murs, 10), { x: 0, y: 0, angle: 0 }); // bornée à l'extrémité
+  assert.deepEqual(aimanter({ x: 40, y: 8 }, murs, 10), { x: 40, y: 0, angle: 0, indice: 0 });
+  assert.deepEqual(aimanter({ x: 95, y: 50 }, murs, 10), { x: 100, y: 50, angle: 90, indice: 0 });
+  assert.deepEqual(aimanter({ x: -5, y: 3 }, murs, 10), { x: 0, y: 0, angle: 0, indice: 0 }); // bornée à l'extrémité
   assert.equal(aimanter({ x: 40, y: 30 }, murs, 10), null);
+  assert.equal(aimanter({ x: 40, y: 58 }, [...murs, [0, 60, 100, 60]], 10)?.indice, 1); // la polyligne la plus proche
 });
 
 test('lireProjet : aller-retour multi-étages et rejets', () => {
