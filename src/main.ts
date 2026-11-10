@@ -508,6 +508,21 @@ stage.on('click tap', (e) => {
   }
 });
 
+// Cadre tout le contenu (plan, structure, équipements, légende) dans la fenêtre.
+function ajusterVue() {
+  const r = layer.getClientRect({ relativeTo: layer });
+  if (!r.width || !r.height) return;
+  const k = Math.min(stage.width() / r.width, stage.height() / r.height) * 0.95;
+  stage.scale({ x: k, y: k });
+  stage.position({ x: (stage.width() - r.width * k) / 2 - r.x * k, y: (stage.height() - r.height * k) / 2 - r.y * k });
+}
+
+// Curseur « déplacer » au survol d'un élément déplaçable, hors pose et calibration.
+stage.on('mouseover', (e) => {
+  if (!outil && !calib && e.target.findAncestor('.objet', true)) conteneur.style.cursor = 'move';
+});
+stage.on('mouseout', majStatut);
+
 stage.on('wheel', (e) => {
   e.evt.preventDefault();
   const ptr = stage.getPointerPosition();
@@ -811,9 +826,10 @@ $('calques').addEventListener('change', (e) => {
 
 const bouton = (type: string, couleur: string, nom: string, dessin: string) =>
   `<button data-type="${type}" style="color:${couleur}"><svg viewBox="0 0 ${B} ${B}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${dessin}</svg><span>${nom}</span></button>`;
+// Une section repliable par calque : on ne fait défiler que ce qui sert au corps de métier en cours.
 $('palette').innerHTML = CALQUES.map(
   (c) =>
-    `<h3 style="color:${c.couleur}">${c.nom}</h3>` +
+    `<details open><summary style="color:${c.couleur}">${c.nom}</summary>` +
     Object.entries(SYMBOLES)
       .filter(([, s]) => s.calque === c.id)
       .map(([type, s]) =>
@@ -823,7 +839,8 @@ $('palette').innerHTML = CALQUES.map(
     Object.entries(LIAISONS)
       .filter(([, t]) => t.calque === c.id)
       .map(([type, t]) => bouton(type, t.couleur === '#ffffff' ? '#9ca3af' : t.couleur, t.nom, `<path d="M2 12 H22" stroke-width="2"${t.tirets ? ` stroke-dasharray="${t.tirets}"` : ''}/>`))
-      .join(''),
+      .join('') +
+    '</details>',
 ).join('');
 $('palette').addEventListener('click', (e) => {
   const b = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-type]');
@@ -834,10 +851,8 @@ $('palette').addEventListener('click', (e) => {
 function majProps() {
   const el = $('props');
   const c = cible();
-  if (!c) {
-    el.textContent = 'Sélectionnez un élément pour modifier ses propriétés.';
-    return;
-  }
+  el.hidden = !c;
+  if (!c) return;
   const liaison = 'points' in c;
   el.innerHTML =
     `<strong>${(liaison ? LIAISONS : SYMBOLES)[c.type].nom}</strong>` +
@@ -905,6 +920,7 @@ $('b-etage-suppr').onclick = () => {
   modifie = true;
   changerEtage(0);
 };
+$('b-ajuster').onclick = ajusterVue;
 $('b-annuler').onclick = () => appliquer(hist.annuler());
 $('b-refaire').onclick = () => appliquer(hist.refaire());
 
@@ -916,6 +932,7 @@ addEventListener('keydown', (e) => {
   if (ctrl && k === 's') (e.preventDefault(), enregistrer());
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) (e.preventDefault(), appliquer(hist.refaire()));
   else if (ctrl && k === 'z') (e.preventDefault(), appliquer(hist.annuler()));
+  else if (k === '0' && !ctrl) ajusterVue();
   else if (k === 'escape') {
     changerMode(null);
     selectionner(null);
