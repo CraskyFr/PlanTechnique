@@ -75,11 +75,20 @@ export const SYMBOLES: Record<string, Symbole> = {
     d: 'M4 12 a8 8 0 1 0 16 0 a8 8 0 1 0 -16 0 M6.3 6.3 L17.7 17.7 M17.7 6.3 L6.3 17.7',
     libre: true, // au plafond
   },
+  spot: { calque: 'elec', nom: 'Spot encastré', d: 'M7 12 a5 5 0 1 0 10 0 a5 5 0 1 0 -10 0 M8.5 8.5 L15.5 15.5 M15.5 8.5 L8.5 15.5', libre: true },
+  // Lave-linge, lave-vaisselle, four, sèche-linge… : un circuit dédié chacun.
+  priseSpe: { calque: 'elec', nom: 'Prise spécialisée', d: 'M5 16 A7 7 0 0 1 19 16 M12 9 V3', texte: 'S', hauteur: 30 },
+  priseExt: { calque: 'elec', nom: 'Prise extérieure', d: 'M5 16 A7 7 0 0 1 19 16 M12 9 V3', texte: 'EXT', hauteur: 30 },
+  sortieCable: { calque: 'elec', nom: 'Sortie de câble', d: 'M12 2 V10 M6 10 H18 L12 20 Z' },
+  voletRoulant: { calque: 'elec', nom: 'Commande volet roulant', d: RECT, texte: 'VR', hauteur: 110 },
+  daaf: { calque: 'elec', nom: 'Détecteur de fumée', d: CERCLE, texte: 'DF', libre: true }, // obligatoire, au plafond
+  compteur: { calque: 'elec', nom: 'Compteur', d: CARRE, texte: 'CPT' },
   tableau: { calque: 'elec', nom: 'Tableau électrique', d: 'M3 5 H21 V19 H3 Z M3 19 L21 5' },
 
   rj45: { calque: 'reseau', nom: 'Prise RJ45', d: RECT, texte: 'RJ45', hauteur: 30 },
   tv: { calque: 'reseau', nom: 'Prise TV', d: RECT, texte: 'TV', hauteur: 30 },
   baie: { calque: 'reseau', nom: 'Baie de brassage', d: CARRE, texte: 'BAIE' },
+  interphone: { calque: 'reseau', nom: 'Interphone', d: RECT, texte: 'INT', hauteur: 150 },
 
   // AEP (adduction d'eau potable) : arrivée du réseau public, robinet d'eau potable. « EP » désigne les eaux pluviales.
   aep: { calque: 'eau', nom: 'Eau potable', d: CERCLE, texte: 'AEP' },
@@ -93,4 +102,5 @@ export const SYMBOLES: Record<string, Symbole> = {
   pac: { calque: 'chauffage', nom: 'Pompe à chaleur', d: CARRE, texte: 'PAC' },
   chaudiere: { calque: 'chauffage', nom: 'Chaudière', d: CARRE, texte: 'CH' },
   thermostat: { calque: 'chauffage', nom: 'Thermostat', d: CERCLE, texte: 'T', hauteur: 150 },
+  vmc: { calque: 'chauffage', nom: 'Bouche VMC', d: CERCLE, texte: 'VMC', libre: true }, // au plafond
 };

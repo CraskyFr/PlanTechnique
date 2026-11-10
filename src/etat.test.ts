@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Historique, aimanter, echelleDepuis, lireProjet, longueur, nomenclature } from './etat.ts';
+import { Historique, aimanter, bilanCircuits, manquesPiece, echelleDepuis, lireProjet, longueur, nomenclature } from './etat.ts';
 
 const etage = {
   nom: 'RDC',
@@ -57,6 +57,34 @@ test('nomenclature : quantités, longueurs en mètres, formules neutralisées', 
   assert.equal(csv[1], '"RDC";"Électricité";"Prise 16 A";"1";""');
   assert.equal(csv[2], '"RDC";"Électricité";"Câble électrique";"1";"5,00"');
   assert.equal(csv[4], `"'=1+1";"Électricité";"Câble électrique";"1";"non calibré"`);
+});
+
+test('bilanCircuits : comptes, tri et alertes', () => {
+  const o = (type: string, repere?: string, id = 0) => ({ id, type, x: 0, y: 0, rot: 0, props: repere ? { repere } : {} });
+  const bilan = bilanCircuits([
+    ...Array.from({ length: 9 }, () => o('prise16', 'C10')),
+    o('lumiere', 'C2'), o('spot', 'C2'), o('inter', 'C2'),
+    o('prise32', 'C3'), o('prise16', 'C3'),
+    o('prise16'), o('rj45', 'R1'), // sans circuit ; RJ45 hors électricité
+  ]);
+  assert.deepEqual(bilan.map((c) => [c.nom, c.prises, c.eclairage, c.dedies, c.autres]), [
+    ['C2', 0, 2, 0, 1], ['C3', 1, 0, 1, 0], ['C10', 9, 0, 0, 0], ['', 1, 0, 0, 0],
+  ]);
+  assert.deepEqual(bilan.map((c) => c.alertes.length), [0, 1, 1, 0]); // C3 : 32 A partagée ; C10 : trop de prises
+  assert.match(bilan[2].alertes[0], /^9 prises/);
+});
+
+test('manquesPiece : minimums par type de pièce', () => {
+  const vide = { prises: 0, eclairage: 0, rj45: 0, prise32: 0 };
+  assert.deepEqual(manquesPiece('sejour', 30, { ...vide, prises: 6, eclairage: 1, rj45: 1 }), ['6 / 7 prise(s) 16 A']); // 1 par 4 m² → 8, plafonné à 7
+  assert.deepEqual(manquesPiece('sejour', 12, { ...vide, prises: 5, eclairage: 1, rj45: 1 }), []); // minimum 5
+  assert.deepEqual(manquesPiece('cuisine', 10, { ...vide, prises: 6, eclairage: 1 }), ['0 / 1 prise 32 A (cuisson)']);
+  assert.deepEqual(manquesPiece('autre', 50, vide), []);
+});
+
+test('lireProjet : types de pièces gardés, entrées invalides ignorées', () => {
+  const [lu] = lireProjet(JSON.stringify({ objets: [], pieces: [{ x: 1, y: 2, type: 'cuisine' }, { x: 1, y: 2, type: 'grenier' }, { x: 'a', y: 2, type: 'wc' }] }));
+  assert.deepEqual(lu.pieces, [{ x: 1, y: 2, type: 'cuisine' }]);
 });
 
 test('historique : annuler, rétablir, et une nouvelle action efface le futur', () => {

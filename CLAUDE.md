@@ -31,4 +31,6 @@ Les imports gardent l'extension `.ts` (nécessaire pour que Node lance les tests
 3. **Structure (fait)** : calque Structure. Cloison, cloison à démolir et masque blanc sont des `LIAISONS` avec `epaisseur` (trait à l'échelle réelle) ; porte et fenêtre sont des `SYMBOLES` avec `mural` (largeur réelle, aimantés aux cloisons tracées via `aimanter()`). Pas encore : miroir de porte (sens des gonds), aimantation aux murs de l'image importée.
 4. **Confort (fait)** : étages multiples (fichier `{ etages: [...] }`, anciens fichiers mono-étage toujours lus ; `projet` dans `main.ts` = étage affiché), cotes (`LIAISONS.cote`), nomenclature CSV (`nomenclature()`), impression à l'échelle via `window.print()` et `@page` (pas de bibliothèque PDF), verrou de calque.
 
-Idées non faites : ajout/suppression de points sur une liaison existante, impression en mosaïque au-delà de l'A3, copie d'éléments entre étages, sauvegarde automatique.
+Idées non faites : ajout/suppression de points sur une liaison existante, impression en mosaïque au-delà de l'A3. Export DXF écarté (inutile pour l'utilisateur).
+
+Fait depuis : circuits électriques (`bilanCircuits()` dans `etat.ts`, panneau Circuits, circuit de pose), copier/coller/dupliquer (Ctrl+C/V/D), sauvegarde automatique dans IndexedDB avec reprise au démarrage, vérification par pièce (`manquesPiece()`, type de pièce mémorisé dans `Etage.pieces` par un point), suivi de chantier (`props.fait`, touche F, panneau Avancement).

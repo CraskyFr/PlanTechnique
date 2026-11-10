@@ -6,7 +6,7 @@ import { blanchir, masqueMurs, ouvertures, rectangles } from './detection.ts';
 import { echelleDepuisCotes, effacerCotes } from './cotes.ts';
 import { pieces as trouverPieces } from './pieces.ts';
 import { pdfDepuisJpeg } from './pdf.ts';
-import { Historique, aimanter, echelleDepuis, etageVide, lireProjet, longueur, nomenclature, type Etage, type Liaison, type Objet, type Point, type Props } from './etat.ts';
+import { Historique, TYPES_PIECES, aimanter, bilanCircuits, manquesPiece, echelleDepuis, etageVide, lireProjet, longueur, nomenclature, type Etage, type Liaison, type Objet, type Point, type Props } from './etat.ts';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -68,6 +68,29 @@ function aimanterObjet(o: Objet) {
 function valider() {
   hist.commit(instantane());
   modifie = true;
+  sauvegarderBientot();
+}
+
+// ---------- Sauvegarde automatique (IndexedDB du navigateur) ----------
+// Une copie du projet est gardée à chaque modification ; au démarrage, un travail non enregistré est proposé à la reprise.
+type Sauvegarde = { texte: string; date: number; enregistre: boolean };
+const ouvrirBase = () =>
+  new Promise<IDBDatabase>((ok, ko) => {
+    const r = indexedDB.open('plan-technique', 1);
+    r.onupgradeneeded = () => r.result.createObjectStore('sauvegarde');
+    r.onsuccess = () => ok(r.result);
+    r.onerror = () => ko(r.error);
+  });
+async function sauvegarde(valeur?: Sauvegarde): Promise<Sauvegarde | undefined> {
+  const table = (await ouvrirBase()).transaction('sauvegarde', valeur ? 'readwrite' : 'readonly').objectStore('sauvegarde');
+  const r = valeur ? table.put(valeur, 'projet') : table.get('projet');
+  return new Promise((ok, ko) => ((r.onsuccess = () => ok(valeur ? undefined : r.result)), (r.onerror = () => ko(r.error))));
+}
+let minuterie = 0;
+function sauvegarderBientot() {
+  clearTimeout(minuterie);
+  // ponytail: copie complète (fond compris) à chaque fois ; ne sauver que l'étage modifié si ça devient lent.
+  minuterie = window.setTimeout(() => sauvegarde({ texte: JSON.stringify({ etages }), date: Date.now(), enregistre: !modifie }).catch(() => {}), 1500);
 }
 
 function appliquer(s: string | null) {
@@ -138,6 +161,7 @@ function noeudSymbole(o: Objet): Konva.Group {
   const texte = [o.props.repere, o.props.hauteur && `h${o.props.hauteur}`].filter(Boolean).join(' · ');
   // Étiquette contre-pivotée : elle reste horizontale, sous le symbole, quelle que soit sa rotation.
   if (texte) g.add(new Konva.Text({ x: B / 2, y: B / 2, rotation: -o.rot, width: 80, offset: { x: 40, y: -(B / 2 + 1) }, align: 'center', text: texte, fontSize: 5, fontStyle: 'bold', fill: couleur }));
+  if (o.props.fait) g.add(pastilleFait(B, 0, (4 * k) / sc)); // même taille quelle que soit l'échelle du symbole
   return g;
 }
 
@@ -155,6 +179,7 @@ function rendre() {
     g.add(t.cote ? new Konva.Arrow({ ...trait, pointerAtBeginning: true, pointerLength: 3 * k, pointerWidth: 3 * k, fill: t.couleur }) : new Konva.Line(trait));
     const texte = t.cote ? (projet.echelle ? `${metres(longueur(l.points))} m` : 'non calibré') : [l.props.repere, l.props.section].filter(Boolean).join(' · ');
     if (texte) g.add(new Konva.Text({ x: (l.points[0] + l.points[2]) / 2 + 2 * k, y: (l.points[1] + l.points[3]) / 2 + 2 * k, text: texte, fontSize: 5 * k, fontStyle: 'bold', fill: t.couleur }));
+    if (l.props.fait) g.add(pastilleFait((l.points[0] + l.points[2]) / 2, (l.points[1] + l.points[3]) / 2, 4 * k));
     g.on('dragend', () => {
       l.points = l.points.map((v, i) => v + (i % 2 ? g.y() : g.x()));
       delete l.debut; // déplacé en bloc : le câble quitte ses équipements
@@ -193,6 +218,9 @@ function rendre() {
   rendreCotesAuto();
   rendreLegende();
   majPoigneesAuRendu();
+  majCircuits();
+  majPieces();
+  majAvancement();
   $<HTMLInputElement>('taille').value = String(k);
   layer.draw(); // synchrone : les nouveaux nœuds sont cliquables tout de suite, sans attendre la prochaine frame
   majStatut();
@@ -200,24 +228,42 @@ function rendre() {
 
 // ---------- Cotes automatiques ----------
 type Trait = [number, number, number, number]; // x0, y0, x1, y1 en pixels du plan
-let cotesCache: { cle: string; traits: Trait[] } | null = null;
+// Pièce détectée : numéro, point d'ancrage dedans (pour son repère « P1 »), surface en m².
+type Salle = { num: number; x: number; y: number; aire: number };
+type Analyse = { traits: Trait[]; salles: Salle[]; numero: (x: number, y: number) => number }; // numero : pièce au point, ≤ 0 hors pièce
+let cotesCache: ({ cle: string } & Analyse) | null = null;
 
 // Pièces, portes, fenêtres et cloisons, toutes dans le calque « Cotes automatiques ».
 function rendreCotesAuto() {
   groupes.cotesAuto.destroyChildren();
-  if (!projet.echelle) return; // sans échelle, pas de centimètres à afficher
+  if (!projet.echelle) return void (cotesCache = null); // sans échelle, pas de centimètres à afficher
+  const e = projet.echelle;
   const cloisons = projet.liaisons.filter((l) => l.type === 'cloison');
   const ouvertures = projet.objets.filter((o) => SYMBOLES[o.type].mural);
   // Recalcul seulement quand la structure change : poser une prise ne refait pas la détection des pièces.
-  const cle = JSON.stringify([projet.echelle, cloisons, ouvertures]);
-  if (cotesCache?.cle !== cle) cotesCache = { cle, traits: calculerCotes(cloisons, ouvertures) };
+  const cle = JSON.stringify([e, cloisons, ouvertures]);
+  if (cotesCache?.cle !== cle) cotesCache = { cle, ...calculerCotes(cloisons, ouvertures) };
   for (const t of cotesCache.traits) dessinerCote(groupes.cotesAuto, t);
+  // Repère de chaque pièce (P1, P2…), avec son type s'il est choisi dans le panneau Pièces.
+  for (const s of cotesCache.salles) {
+    const type = typePiece(s);
+    const etiquette = new Konva.Label({ x: s.x, y: s.y + 0.25 / e });
+    etiquette.add(
+      new Konva.Tag({ fill: VIOLET, cornerRadius: 0.06 / e }),
+      new Konva.Text({ text: `P${s.num}${type ? ' · ' + TYPES_PIECES[type] : ''}`, fontSize: 0.16 / e, fontStyle: 'bold', fill: '#fff', padding: 0.04 / e }),
+    );
+    etiquette.offsetX(etiquette.width() / 2);
+    groupes.cotesAuto.add(etiquette);
+  }
 }
 
-function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Trait[] {
+const typePiece = (s: Salle) => projet.pieces?.find((p) => cotesCache?.numero(p.x, p.y) === s.num)?.type;
+
+function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Analyse {
   const e = projet.echelle!;
   const traits: Trait[] = [];
-  if (!cloisons.length) return traits;
+  const salles: Salle[] = [];
+  if (!cloisons.length) return { traits, salles, numero: () => 0 };
   const epaisseur = (l: Liaison) => nombre(l.props.epaisseur, LIAISONS.cloison.epaisseur!) / 100 / e;
   const largeur = (o: Objet) => nombre(o.props.largeur, SYMBOLES[o.type].mural!) / 100 / e;
 
@@ -302,7 +348,9 @@ function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Trait[] {
     for (let p = 0; p < W * H; p++) murs[p] = +(alpha[p * 4 + 3] > 127);
     // Pièces d'au moins 0,5 m² ; rayon de 3 px : les murs reconnus sont des tranches séparées de quelques pixels.
     const resultat = trouverPieces(murs, W, H, Math.round(0.5 / e / e), 3);
-    etiquettes = resultat.etiquettes;    for (const { largeur: l, hauteur: h } of resultat.pieces) {
+    etiquettes = resultat.etiquettes;
+    resultat.pieces.forEach(({ aire, largeur: l }, i) => salles.push({ num: i + 1, x: ox + (l.b0 + l.b1) / 2, y: oy + l.a + 0.5, aire: aire * e * e }));
+    for (const { largeur: l, hauteur: h } of resultat.pieces) {
       traits.push([ox + l.b0, oy + l.a + 0.5, ox + l.b1, oy + l.a + 0.5]);
       traits.push([ox + h.a + 0.5, oy + h.b0, ox + h.a + 0.5, oy + h.b1]);
     }
@@ -347,7 +395,7 @@ function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Trait[] {
     const L = r.horizontal ? r.x1 - r.x0 : r.y1 - r.y0, demi = (r.horizontal ? r.y1 - r.y0 : r.x1 - r.x0) / 2;
     if (L * e >= 0.3) traits.push(aCote((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, +r.horizontal, +!r.horizontal, L, demi));
   }
-  return traits;
+  return { traits, salles, numero: (x, y) => lire(etiquettes, x, y) };
 }
 
 // Cote façon Kazaplan : trait violet fin, taquets aux deux bouts, valeur en centimètres au milieu sur fond blanc.
@@ -428,8 +476,138 @@ let rotPose = 0; // rotation choisie avec R pour les symboles posés librement (
 function objetPose(p: Point): Objet {
   const s = SYMBOLES[outil!];
   const o: Objet = { id: 0, type: outil!, x: p.x, y: p.y, rot: rotPose, props: s.hauteur ? { hauteur: String(s.hauteur) } : {} };
+  // Circuit choisi dans le panneau Circuits : affecté d'office aux équipements électriques posés.
+  const circuit = $<HTMLInputElement>('circuit').value.trim();
+  if (circuit && s.calque === 'elec') o.props.repere = circuit;
   caler(o);
   return o;
+}
+
+// ---------- Circuits électriques ----------
+// Bilan par circuit de l'étage : un clic sur un circuit le choisit pour les poses suivantes.
+function majCircuits() {
+  const liste = $('circuits');
+  liste.replaceChildren(
+    ...bilanCircuits(projet.objets).map((c) => {
+      const li = document.createElement('li');
+      const detail = [c.prises && `${c.prises} prise${c.prises > 1 ? 's' : ''}`, c.eclairage && `${c.eclairage} éclairage${c.eclairage > 1 ? 's' : ''}`, c.dedies && `${c.dedies} spécialisée${c.dedies > 1 ? 's' : ''}`, c.autres && `${c.autres} autre${c.autres > 1 ? 's' : ''}`].filter(Boolean).join(' · ');
+      const titre = document.createElement('strong');
+      titre.textContent = (c.nom || 'Sans circuit') + (c.nom ? (c.alertes.length ? ' ⚠' : ' ✓') : '');
+      li.append(titre, ` ${detail}`);
+      for (const a of c.alertes) {
+        const p = document.createElement('div');
+        p.className = 'alerte';
+        p.textContent = a;
+        li.append(p);
+      }
+      if (c.nom) {
+        li.tabIndex = 0;
+        li.title = 'Utiliser ce circuit pour les prochaines poses';
+        li.onclick = () => (($<HTMLInputElement>('circuit').value = c.nom), majFantome(null));
+      }
+      return li;
+    }),
+  );
+}
+
+// ---------- Vérification par pièce ----------
+// Pour chaque pièce détectée : type à choisir, équipements posés dedans, et ce qui manque d'après la norme.
+function majPieces() {
+  const liste = $('pieces');
+  const daaf = etages.some((et) => et.objets.some((o) => o.type === 'daaf'));
+  const global = document.createElement('li');
+  global.className = daaf ? '' : 'alerte';
+  global.textContent = daaf ? 'Détecteur de fumée ✓' : 'Aucun détecteur de fumée (1 obligatoire par logement)';
+  if (!cotesCache?.salles.length) {
+    const vide = document.createElement('li');
+    vide.textContent = projet.echelle ? 'Aucune pièce fermée détectée.' : "Échelle inconnue : pièces non détectées.";
+    return liste.replaceChildren(global, vide);
+  }
+  const { salles, numero } = cotesCache;
+  liste.replaceChildren(
+    global,
+    ...salles.map((s) => {
+      const dedans = projet.objets.filter((o) => numero(o.x, o.y) === s.num);
+      const n = (...types: string[]) => dedans.filter((o) => types.includes(o.type)).length;
+      const eq = { prises: n('prise16'), eclairage: n('lumiere', 'spot'), rj45: n('rj45'), prise32: n('prise32') };
+      const type = typePiece(s) ?? '';
+      const li = document.createElement('li');
+      const choix = document.createElement('select');
+      choix.setAttribute('aria-label', `Type de la pièce P${s.num}`);
+      choix.append(new Option('Type…', ''), ...Object.entries(TYPES_PIECES).map(([v, nom]) => new Option(nom, v, false, v === type)));
+      choix.onchange = () => {
+        projet.pieces = (projet.pieces ?? []).filter((p) => numero(p.x, p.y) !== s.num);
+        if (choix.value) projet.pieces.push({ x: s.x, y: s.y, type: choix.value });
+        valider();
+        rendre();
+      };
+      const titre = document.createElement('strong');
+      const manques = type ? manquesPiece(type, s.aire, eq) : [];
+      titre.textContent = `P${s.num} · ${s.aire.toFixed(1).replace('.', ',')} m²${type ? (manques.length ? ' ⚠' : ' ✓') : ''}`;
+      const detail = document.createElement('div');
+      detail.textContent = `${eq.prises} prise(s) · ${eq.eclairage} éclairage(s) · ${eq.rj45} RJ45`;
+      li.append(titre, choix, detail);
+      for (const m of manques) {
+        const a = document.createElement('div');
+        a.className = 'alerte';
+        a.textContent = `Manque : ${m}`;
+        li.append(a);
+      }
+      return li;
+    }),
+  );
+}
+
+// ---------- Suivi de chantier ----------
+// Pastille verte sur ce qui est posé (case « Fait » des Propriétés, ou touche F) et avancement par corps de métier.
+function pastilleFait(x: number, y: number, r: number) {
+  const g = new Konva.Group({ x, y, listening: false });
+  g.add(
+    new Konva.Circle({ radius: r, fill: '#16a34a', stroke: '#fff', strokeWidth: r * 0.2 }),
+    new Konva.Line({ points: [-0.45 * r, 0, -0.1 * r, 0.35 * r, 0.5 * r, -0.35 * r], stroke: '#fff', strokeWidth: r * 0.25, lineCap: 'round', lineJoin: 'round' }),
+  );
+  return g;
+}
+
+function majAvancement() {
+  $('avancement').replaceChildren(
+    ...CALQUES.filter((c) => !['structure', 'cotes'].includes(c.id)).flatMap((c) => {
+      const elements = [...projet.objets.filter((o) => SYMBOLES[o.type].calque === c.id), ...projet.liaisons.filter((l) => LIAISONS[l.type].calque === c.id)];
+      if (!elements.length) return [];
+      const faits = elements.filter((x) => x.props.fait).length, pct = Math.round((100 * faits) / elements.length);
+      const li = document.createElement('li');
+      li.style.color = c.couleur;
+      li.textContent = `${c.nom} : ${faits} / ${elements.length} (${pct} %)`;
+      const barre = document.createElement('progress');
+      barre.max = elements.length;
+      barre.value = faits;
+      li.append(barre);
+      return [li];
+    }),
+  );
+}
+
+// ---------- Copier, coller, dupliquer ----------
+let pressePapiers: Objet | Liaison | null = null;
+
+// Copie de l'élément posée en p (ou décalée d'un symbole) ; décrochée de ses équipements, puis sélectionnée.
+function coller(source: Objet | Liaison, p: Point | null) {
+  const copie: Objet | Liaison = structuredClone(source);
+  copie.id = nouvelId();
+  const pas = B * projet.taille;
+  if ('points' in copie) {
+    const [dx, dy] = p ? [p.x - copie.points[0], p.y - copie.points[1]] : [pas, pas];
+    copie.points = copie.points.map((v, i) => v + (i % 2 ? dy : dx));
+    delete copie.debut;
+    delete copie.fin;
+    projet.liaisons.push(copie);
+  } else {
+    Object.assign(copie, p ?? { x: copie.x + pas, y: copie.y + pas });
+    caler(copie);
+    projet.objets.push(copie);
+  }
+  valider();
+  selectionner(copie.id);
 }
 
 // Calage commun à la pose et au déplacement.
@@ -839,6 +1017,7 @@ function nettoyerFond(cotesKazaplan: boolean) {
   ctx.putImageData(image, 0, 0);
   noeud.image(canvas);
   projet.fond = canvas.toDataURL('image/png');
+  sauvegarderBientot();
 }
 
 // ---------- Fichiers ----------
@@ -854,6 +1033,7 @@ function enregistrer() {
   telecharger(url, 'plan-technique.json');
   setTimeout(() => URL.revokeObjectURL(url), 1000);
   modifie = false;
+  sauvegarderBientot(); // marquée « enregistrée » : plus de proposition de reprise
 }
 
 async function ouvrir(f: File) {
@@ -1004,18 +1184,26 @@ function majProps() {
     champs(c).map(([cle, nom, defaut]) => `<label>${nom}<input type="text" data-champ="${cle}" placeholder="${defaut}"></label>`).join('') +
     (liaison && projet.echelle ? `<p>Longueur : ${metres(longueur(c.points))} m</p>` : '') +
     (!liaison && SYMBOLES[c.type].mural ? `<p>R : passer de l'autre côté du mur. M : inverser les gonds.</p>` : '') +
-    (!projet.echelle && (liaison ? LIAISONS[c.type].epaisseur : SYMBOLES[c.type].mural) ? `<p>Calibrez l'échelle pour un tracé aux dimensions réelles.</p>` : '');
-  for (const i of el.querySelectorAll('input')) i.value = c.props[i.dataset.champ!] ?? ''; // via .value : jamais interprété comme du HTML
+    (!projet.echelle && (liaison ? LIAISONS[c.type].epaisseur : SYMBOLES[c.type].mural) ? `<p>Calibrez l'échelle pour un tracé aux dimensions réelles.</p>` : '') +
+    `<label class="fait"><input type="checkbox" data-fait> Fait / posé (touche F)</label>`;
+  for (const i of el.querySelectorAll<HTMLInputElement>('input[data-champ]')) i.value = c.props[i.dataset.champ!] ?? ''; // via .value : jamais interprété comme du HTML
+  el.querySelector<HTMLInputElement>('[data-fait]')!.checked = !!c.props.fait;
 }
 $('props').addEventListener('input', (e) => {
   const i = e.target as HTMLInputElement;
   const c = cible();
   if (!c) return;
-  if (i.value.trim()) c.props[i.dataset.champ!] = i.value.trim();
+  if (i.type === 'checkbox') basculerFait(c, i.checked);
+  else if (i.value.trim()) c.props[i.dataset.champ!] = i.value.trim();
   else delete c.props[i.dataset.champ!];
   modifie = true;
   rendre();
 });
+
+function basculerFait(c: Objet | Liaison, fait = !c.props.fait) {
+  if (fait) c.props.fait = '1';
+  else delete c.props.fait;
+}
 $('props').addEventListener('change', valider);
 
 const opacite = $<HTMLInputElement>('opacite');
@@ -1075,6 +1263,9 @@ addEventListener('keydown', (e) => {
   const ctrl = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (ctrl && k === 's') (e.preventDefault(), enregistrer());
+  else if (ctrl && k === 'c' && cible()) pressePapiers = structuredClone(cible()!);
+  else if (ctrl && k === 'v' && pressePapiers) (e.preventDefault(), coller(pressePapiers, layer.getRelativePointerPosition()));
+  else if (ctrl && k === 'd' && cible()) (e.preventDefault(), coller(cible()!, null));
   else if (ctrl && (k === 'y' || (k === 'z' && e.shiftKey))) (e.preventDefault(), appliquer(hist.refaire()));
   else if (ctrl && k === 'z') (e.preventDefault(), appliquer(hist.annuler()));
   else if (k === '0' && !ctrl) ajusterVue();
@@ -1094,6 +1285,11 @@ addEventListener('keydown', (e) => {
     projet.liaisons = projet.liaisons.filter((l) => l.id !== selection);
     valider();
     selectionner(null);
+  } else if (k === 'f' && !ctrl && cible()) {
+    basculerFait(cible()!);
+    valider();
+    rendre();
+    majProps();
   } else if (k === 'm' && !ctrl) {
     // Miroir d'une porte ou d'une fenêtre : change le côté des gonds sans changer le côté d'ouverture.
     const o = projet.objets.find((o) => o.id === selection);
@@ -1125,3 +1321,16 @@ rendre();
 majProps();
 majCoords();
 majEtages();
+
+// Reprise d'un travail non enregistré (fermeture d'onglet, plantage…).
+sauvegarde()
+  .then((s) => {
+    if (!s || s.enregistre) return;
+    const quand = new Date(s.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+    if (!confirm(`Un travail non enregistré du ${quand} a été retrouvé. Le reprendre ?`)) return;
+    etages = lireProjet(s.texte);
+    hist = new Historique(instantane());
+    modifie = true;
+    changerEtage(0);
+  })
+  .catch(() => {}); // stockage indisponible (navigation privée…) : l'appli fonctionne sans
