@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Plan technique</title>
+    <style>
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: grid;
+        grid-template: auto 1fr auto / 230px 1fr;
+        grid-template-areas: 'haut haut' 'cote plan' 'bas bas';
+        font: 14px/1.4 system-ui, sans-serif;
+        color: #1f2937;
+        background: #f3f4f6;
+      }
+      header { grid-area: haut; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 12px; background: #fff; border-bottom: 1px solid #d1d5db; }
+      header strong { margin-right: 10px; }
+      .sep { width: 1px; align-self: stretch; background: #d1d5db; margin: 0 4px; }
+      button, .btn { font: inherit; color: inherit; padding: 5px 10px; border: 1px solid #9ca3af; border-radius: 6px; background: #fff; cursor: pointer; }
+      button:hover, .btn:hover { background: #f3f4f6; }
+      button:focus-visible, .btn:focus-within { outline: 2px solid #2563eb; outline-offset: 1px; }
+      .vh { position: absolute; width: 1px; height: 1px; opacity: 0; }
+      aside { grid-area: cote; overflow-y: auto; padding: 10px 12px; background: #fff; border-right: 1px solid #d1d5db; }
+      h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7280; margin: 14px 0 6px; }
+      h2:first-child { margin-top: 0; }
+      h3 { font-size: 13px; margin: 10px 0 4px; }
+      aside label { display: block; margin: 3px 0; }
+      aside input[type='range'] { width: 100%; }
+      #props { font-size: 13px; color: #4b5563; }
+      #props strong { color: #1f2937; }
+      #props input { width: 100%; font: inherit; padding: 3px 6px; border: 1px solid #9ca3af; border-radius: 4px; }
+      #props p { margin: 6px 0 0; }
+      #palette button { display: flex; align-items: center; gap: 8px; width: 100%; margin: 2px 0; padding: 3px 8px; text-align: left; border-color: transparent; }
+      #palette button.actif { border-color: currentColor; background: #eff6ff; }
+      #palette svg { width: 26px; height: 26px; flex: none; }
+      #palette span { color: #1f2937; }
+      main { grid-area: plan; overflow: hidden; min-width: 0; min-height: 0; background: #e5e7eb; }
+      footer { grid-area: bas; display: flex; justify-content: space-between; gap: 12px; padding: 4px 12px; background: #fff; border-top: 1px solid #d1d5db; font-size: 13px; color: #4b5563; }
+      .calque { display: flex; justify-content: space-between; }
+      #impression { display: none; }
+      @media print {
+        html, body { height: auto; }
+        body { display: block; background: #fff; }
+        body > :not(#impression) { display: none; }
+        #impression { display: block; }
+        #impression img { display: block; }
+        #impression p { margin: 2mm 0 0; font-size: 9pt; }
+      }
+    </style>
+    <style id="page"></style>
+  </head>
+  <body>
+    <header>
+      <strong>Plan technique</strong>
+      <select id="etage" class="btn" aria-label="Étage affiché"></select>
+      <button id="b-etage-plus" title="Ajouter un étage" aria-label="Ajouter un étage">+</button>
+      <button id="b-etage-nom">Renommer</button>
+      <button id="b-etage-suppr">Supprimer</button>
+      <span class="sep"></span>
+      <label class="btn">Importer un plan<input id="f-fond" class="vh" type="file" accept="image/*,application/pdf" /></label>
+      <span class="sep"></span>
+      <label class="btn">Ouvrir<input id="f-projet" class="vh" type="file" accept=".json,application/json" /></label>
+      <button id="b-sauver" title="Ctrl+S">Enregistrer</button>
+      <button id="b-png">Exporter en PNG</button>
+      <button id="b-csv">Nomenclature CSV</button>
+      <button id="b-imprimer">Imprimer à l'échelle</button>
+      <span class="sep"></span>
+      <button id="b-annuler" title="Ctrl+Z">Annuler</button>
+      <button id="b-refaire" title="Ctrl+Y">Rétablir</button>
+    </header>
+    <aside>
+      <h2>Calques</h2>
+      <div id="calques"></div>
+      <label>Opacité du fond <input id="opacite" type="range" min="0.1" max="1" step="0.05" value="0.6" /></label>
+      <label>Taille des symboles <input id="taille" type="range" min="0.5" max="12" step="0.1" /></label>
+      <h2>Propriétés</h2>
+      <div id="props"></div>
+      <h2>Symboles et liaisons</h2>
+      <div id="palette"></div>
+    </aside>
+    <main id="plan"></main>
+    <footer><span id="statut"></span><span id="coords"></span></footer>
+    <div id="impression"><img id="impression-img" alt="" /><p id="impression-titre"></p></div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
