@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { MODELES, lireNombre } from './cotes.ts';
+import { MODELES, effacerCotes, lireNombre } from './cotes.ts';
+
+test('effacerCotes : la cote prend la couleur du fond autour, le reste est intact', () => {
+  // Ligne : fond gris, cote magenta + son bord anticrénelé, fond gris, mur, nom de pièce vert.
+  const px = [[232, 232, 232], [214, 51, 171], [240, 200, 225], [232, 232, 232], [85, 85, 85], [76, 160, 130]];
+  const img = { data: new Uint8Array(px.flatMap((p) => [...p, 255])), width: 6, height: 1 };
+  effacerCotes(img);
+  assert.deepEqual([...img.data], [232, 232, 232, 255, 232, 232, 232, 255, 232, 232, 232, 255, 232, 232, 232, 255, 85, 85, 85, 255, 76, 160, 130, 255]);
+});
 
 // La lecture complète (repérage du texte, mesure entre murs) a été validée sur un export Kazaplan réel :
 // 7 cotes concordantes, échelle à 0,01 % de celle déduite de la largeur hors tout.

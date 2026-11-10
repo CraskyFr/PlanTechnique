@@ -27,6 +27,31 @@ export const MODELES: Record<string, string> = {
 /** Vrai si le pixel tire sur le magenta ; `marge` = écart minimal entre le rouge et le vert. */
 const magenta = (d: Image['data'], i: number, marge: number) => d[i] - d[i + 1] > marge && d[i + 2] - d[i + 1] > marge * 0.6;
 
+/**
+ * Efface les cotes magenta de l'image, bords anticrénelés compris (l'appli redessine les siennes).
+ * Chaque pixel teinté prend la couleur du fond autour : moyenne des deux plus proches pixels non teintés,
+ * dans le sens (horizontal ou vertical) où le trait est le plus court. Le fond gris reste gris, le blanc reste blanc.
+ */
+export function effacerCotes({ data, width, height }: Image): void {
+  const teinte = new Uint8Array(width * height);
+  for (let p = 0; p < width * height; p++) teinte[p] = +magenta(data, p * 4, 8);
+  const original = Uint8ClampedArray.from(data);
+  for (let p = 0; p < width * height; p++) {
+    if (!teinte[p]) continue;
+    const x = p % width, y = (p - x) / width;
+    let meilleur: [number, number] | null = null, ecart = Infinity;
+    for (const [dx, dy] of [[1, 0], [0, 1]]) {
+      let a = 1, b = 1;
+      while (a < 40 && x - a * dx >= 0 && y - a * dy >= 0 && teinte[p - a * (dx + dy * width)]) a++;
+      while (b < 40 && x + b * dx < width && y + b * dy < height && teinte[p + b * (dx + dy * width)]) b++;
+      const pa = p - a * (dx + dy * width), pb = p + b * (dx + dy * width);
+      const ok = x - a * dx >= 0 && y - a * dy >= 0 && x + b * dx < width && y + b * dy < height && !teinte[pa] && !teinte[pb];
+      if (ok && a + b < ecart) [meilleur, ecart] = [[pa, pb], a + b];
+    }
+    for (let c = 0; c < 3; c++) data[p * 4 + c] = meilleur ? (original[meilleur[0] * 4 + c] + original[meilleur[1] * 4 + c]) / 2 : 255;
+  }
+}
+
 /** Textes magenta horizontaux de l'image, avec leurs chiffres de tête découpés. */
 export function textesCotes({ data, width, height }: Image): Texte[] {
   const n = width * height;

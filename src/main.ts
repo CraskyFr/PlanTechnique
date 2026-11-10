@@ -3,7 +3,7 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { CALQUES, LIAISONS, SYMBOLES } from './symboles.ts';
 import { masqueMurs, ouvertures, rectangles } from './detection.ts';
-import { echelleDepuisCotes } from './cotes.ts';
+import { echelleDepuisCotes, effacerCotes } from './cotes.ts';
 import { pieces as trouverPieces } from './pieces.ts';
 import { Historique, aimanter, echelleDepuis, etageVide, lireProjet, longueur, nomenclature, type Etage, type Liaison, type Objet, type Point, type Props } from './etat.ts';
 
@@ -115,9 +115,30 @@ for (const id of ['fond', ...CALQUES.map((c) => c.id), ...COTES_AUTO.map((c) => 
 for (const id of ['legende', ...COTES_AUTO.map((c) => c.id)]) groupes[id].listening(false);
 const reperes = new Konva.Group({ listening: false });
 const tr = new Konva.Transformer({ resizeEnabled: false, rotationSnaps: [0, 45, 90, 135, 180, 225, 270, 315], rotationSnapTolerance: 8 });
-layer.add(reperes, tr);
+// Symbole en attente de confirmation : aperçu + bouton ✓ (seul élément cliquable du groupe).
+const attente = new Konva.Group();
+layer.add(reperes, attente, tr);
 
 new ResizeObserver(() => stage.size({ width: conteneur.clientWidth, height: conteneur.clientHeight })).observe(conteneur);
+
+// Dessin d'un symbole posé (ou de son aperçu avant confirmation).
+function noeudSymbole(o: Objet): Konva.Group {
+  const s = SYMBOLES[o.type];
+  const couleur = couleurs[s.calque], k = projet.taille;
+  // Élément de mur : la boîte fait sa largeur réelle une fois l'échelle calibrée.
+  const sc = s.mural && projet.echelle ? nombre(o.props.largeur, s.mural) / 100 / projet.echelle / B : k;
+  // Une fenêtre large (baie) ne doit pas épaissir avec sa largeur : son épaisseur est plafonnée à 20 cm.
+  const scY = s.mural && !s.ancre && projet.echelle ? Math.min(sc, 0.2 / projet.echelle / 4) : sc;
+  const g = new Konva.Group({ x: o.x, y: o.y, rotation: o.rot, offset: { x: B / 2, y: s.ancre ?? B / 2 }, scale: { x: o.props.miroir ? -sc : sc, y: scY } });
+  g.add(new Konva.Rect({ width: B, height: B, fill: 'transparent' })); // zone cliquable pleine
+  if (s.masque) g.add(new Konva.Path({ data: s.masque, fill: '#fff' }));
+  g.add(new Konva.Path({ data: s.d, stroke: couleur, strokeWidth: (1.5 * k) / sc, lineCap: 'round', lineJoin: 'round' }));
+  if (s.texte) g.add(new Konva.Text({ text: s.texte, width: B, height: B, align: 'center', verticalAlign: 'middle', fontSize: 7, fontStyle: 'bold', fill: couleur }));
+  const texte = [o.props.repere, o.props.hauteur && `h${o.props.hauteur}`].filter(Boolean).join(' · ');
+  // Étiquette contre-pivotée : elle reste horizontale, sous le symbole, quelle que soit sa rotation.
+  if (texte) g.add(new Konva.Text({ x: B / 2, y: B / 2, rotation: -o.rot, width: 80, offset: { x: 40, y: -(B / 2 + 1) }, align: 'center', text: texte, fontSize: 5, fontStyle: 'bold', fill: couleur }));
+  return g;
+}
 
 function rendre() {
   for (const c of CALQUES) groupes[c.id].destroyChildren();
@@ -142,27 +163,15 @@ function rendre() {
   }
 
   for (const o of projet.objets) {
-    const s = SYMBOLES[o.type];
-    const couleur = couleurs[s.calque];
-    // Élément de mur : la boîte fait sa largeur réelle une fois l'échelle calibrée.
-    const sc = s.mural && projet.echelle ? nombre(o.props.largeur, s.mural) / 100 / projet.echelle / B : k;
-    // Une fenêtre large (baie) ne doit pas épaissir avec sa largeur : son épaisseur est plafonnée à 20 cm.
-    const scY = s.mural && !s.ancre && projet.echelle ? Math.min(sc, 0.2 / projet.echelle / 4) : sc;
-    const g = new Konva.Group({ name: 'objet', id: String(o.id), x: o.x, y: o.y, rotation: o.rot, offset: { x: B / 2, y: s.ancre ?? B / 2 }, scale: { x: o.props.miroir ? -sc : sc, y: scY }, draggable: true });
-    g.add(new Konva.Rect({ width: B, height: B, fill: 'transparent' })); // zone cliquable pleine
-    if (s.masque) g.add(new Konva.Path({ data: s.masque, fill: '#fff' }));
-    g.add(new Konva.Path({ data: s.d, stroke: couleur, strokeWidth: (1.5 * k) / sc, lineCap: 'round', lineJoin: 'round' }));
-    if (s.texte) g.add(new Konva.Text({ text: s.texte, width: B, height: B, align: 'center', verticalAlign: 'middle', fontSize: 7, fontStyle: 'bold', fill: couleur }));
-    const texte = [o.props.repere, o.props.hauteur && `h${o.props.hauteur}`].filter(Boolean).join(' · ');
-    // Étiquette contre-pivotée : elle reste horizontale, sous le symbole, quelle que soit sa rotation.
-    if (texte) g.add(new Konva.Text({ x: B / 2, y: B / 2, rotation: -o.rot, width: 80, offset: { x: 40, y: -(B / 2 + 1) }, align: 'center', text: texte, fontSize: 5, fontStyle: 'bold', fill: couleur }));
+    const g = noeudSymbole(o);
+    g.setAttrs({ name: 'objet', id: String(o.id), draggable: true });
     g.on('dragend transformend', () => {
       Object.assign(o, { x: g.x(), y: g.y(), rot: g.rotation() });
       aimanterObjet(o);
       valider();
       setTimeout(rendre);
     });
-    groupes[s.calque].add(g);
+    groupes[SYMBOLES[o.type].calque].add(g);
     if (o.id === selection) tr.nodes([g]);
   }
 
@@ -377,7 +386,7 @@ function majStatut() {
     : estLiaison(outil)
       ? `Tracé : ${LIAISONS[outil].nom} — cliquez les points (Maj = horizontal/vertical), re-cliquez le dernier point ou Entrée pour terminer`
       : outil
-        ? `Placement : ${SYMBOLES[outil].nom} — cliquez sur le plan (Échap pour arrêter)`
+        ? `Placement : ${SYMBOLES[outil].nom} — cliquez sur le plan, puis sur ✓ (ou Entrée) pour l'ajouter ; Échap pour arrêter`
         : 'Sélection — glisser pour déplacer, R pour pivoter, Suppr pour effacer, molette pour zoomer';
   conteneur.style.cursor = calib || outil ? 'crosshair' : 'default';
   for (const b of $('palette').querySelectorAll('button')) b.classList.toggle('actif', b.dataset.type === outil);
@@ -388,7 +397,44 @@ function changerMode(nouvelOutil: string | null, calibration = false) {
   calib = calibration ? [] : null;
   trace = [];
   reperes.destroyChildren();
+  annulerAttente();
   majStatut();
+}
+
+// ---------- Pose d'un symbole : clic = aperçu, ✓ (ou Entrée) = ajout ----------
+let enAttente: Objet | null = null;
+
+function proposer(p: Point) {
+  const o: Objet = { id: 0, type: outil!, x: p.x, y: p.y, rot: 0, props: {} };
+  aimanterObjet(o);
+  enAttente = o;
+  attente.destroyChildren();
+  const apercu = noeudSymbole(o);
+  apercu.setAttrs({ opacity: 0.5, listening: false });
+  attente.add(apercu);
+  // Bouton de taille constante à l'écran, en haut à droite de l'aperçu.
+  const r = 11 / stage.scaleX(), boite = apercu.getClientRect({ relativeTo: layer });
+  const bouton = new Konva.Group({ name: 'valider', x: boite.x + boite.width + r, y: boite.y - r / 2 });
+  bouton.add(
+    new Konva.Circle({ radius: r, fill: '#16a34a', stroke: '#fff', strokeWidth: 0.15 * r, shadowColor: '#000', shadowBlur: 0.3 * r, shadowOpacity: 0.3 }),
+    new Konva.Line({ points: [-0.45 * r, 0, -0.1 * r, 0.35 * r, 0.5 * r, -0.35 * r], stroke: '#fff', strokeWidth: 0.22 * r, lineCap: 'round', lineJoin: 'round' }),
+  );
+  bouton.on('mouseenter', () => (conteneur.style.cursor = 'pointer'));
+  bouton.on('mouseleave', majStatut);
+  attente.add(bouton);
+}
+
+function confirmer() {
+  if (!enAttente) return;
+  projet.objets.push({ ...enAttente, id: nouvelId() });
+  annulerAttente();
+  valider();
+  rendre();
+}
+
+function annulerAttente() {
+  enAttente = null;
+  attente.destroyChildren();
 }
 
 function selectionner(id: number | null) {
@@ -456,11 +502,8 @@ stage.on('click tap', (e) => {
       if (LIAISONS[outil].cote && trace.length === 4) terminerTrace(); // une cote = deux points
     }
   } else if (outil) {
-    const o: Objet = { id: nouvelId(), type: outil, x: p.x, y: p.y, rot: 0, props: {} };
-    aimanterObjet(o);
-    projet.objets.push(o);
-    valider();
-    rendre();
+    if (e.target.findAncestor('.valider', true)) confirmer();
+    else proposer(p); // un nouveau clic déplace l'aperçu
   } else {
     const g = e.target.findAncestor('.objet', true);
     selectionner(g ? Number(g.id()) : null);
@@ -611,6 +654,13 @@ function reconnaitrePlan() {
       if (rot < 180 ? o.gond === 'fin' : o.gond === 'debut') props.miroir = '1';
     }
     projet.objets.push({ id: nouvelId(), type: o.nature, x: o.x, y: o.y, rot, props });
+  }
+  // Plan Kazaplan (cotes lues) : ses cotes violettes sont effacées du fond, l'appli redessine les siennes.
+  if (lue) {
+    effacerCotes(image);
+    ctx.putImageData(image, 0, 0);
+    groupes.fond.findOne<Konva.Image>('Image')?.image(canvas);
+    projet.fond = canvas.toDataURL('image/png');
   }
   valider();
   rendre();
@@ -833,7 +883,8 @@ addEventListener('keydown', (e) => {
   else if (k === 'escape') {
     changerMode(null);
     selectionner(null);
-  } else if (k === 'enter' && estLiaison(outil)) terminerTrace();
+  } else if (k === 'enter' && enAttente) confirmer();
+  else if (k === 'enter' && estLiaison(outil)) terminerTrace();
   else if ((k === 'delete' || k === 'backspace') && cible()) {
     projet.objets = projet.objets.filter((o) => o.id !== selection);
     projet.liaisons = projet.liaisons.filter((l) => l.id !== selection);
