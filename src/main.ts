@@ -117,6 +117,7 @@ const attente = new Konva.Group();
 // Fantôme : le symbole suit la souris avant le clic, déjà plaqué au mur comme il sera posé.
 const fantome = new Konva.Group({ listening: false, opacity: 0.4 });
 layer.add(reperes, fantome, attente, tr);
+let majPoigneesAuRendu = () => {}; // branché plus bas, une fois le groupe des poignées créé
 
 new ResizeObserver(() => stage.size({ width: conteneur.clientWidth, height: conteneur.clientHeight })).observe(conteneur);
 
@@ -156,6 +157,8 @@ function rendre() {
     if (texte) g.add(new Konva.Text({ x: (l.points[0] + l.points[2]) / 2 + 2 * k, y: (l.points[1] + l.points[3]) / 2 + 2 * k, text: texte, fontSize: 5 * k, fontStyle: 'bold', fill: t.couleur }));
     g.on('dragend', () => {
       l.points = l.points.map((v, i) => v + (i % 2 ? g.y() : g.x()));
+      delete l.debut; // déplacé en bloc : le câble quitte ses équipements
+      delete l.fin;
       valider();
       setTimeout(rendre);
     });
@@ -165,12 +168,21 @@ function rendre() {
   for (const o of projet.objets) {
     const g = noeudSymbole(o);
     g.setAttrs({ name: 'objet', id: String(o.id), draggable: true });
+    // Pendant le glisser, l'élément se cale en direct comme à la pose : contre le mur, ou dans la cloison
+    // pour une porte ou une fenêtre. Ses textes restent à l'horizontale.
+    g.on('dragmove', () => {
+      const t = { ...o, x: g.x(), y: g.y() };
+      caler(t);
+      g.setAttrs({ x: t.x, y: t.y, rotation: t.rot });
+      for (const texte of g.find('Text')) texte.rotation(-t.rot);
+      suivre(t); // les câbles accrochés suivent en direct
+    });
     g.on('dragend transformend', (ev) => {
       Object.assign(o, { x: g.x(), y: g.y(), rot: g.rotation() });
-      aimanterObjet(o);
-      // Une prise glissée le long d'un mur y reste plaquée ; une rotation à la poignée est respectée.
-      const s = SYMBOLES[o.type];
-      if (ev.type === 'dragend' && !s.mural && !s.libre) plaquerAuMur(o);
+      // Une rotation à la poignée est respectée ; seule une porte ou fenêtre se réaligne sur sa cloison.
+      if (ev.type === 'dragend') caler(o);
+      else aimanterObjet(o);
+      suivre(o);
       valider();
       setTimeout(rendre);
     });
@@ -180,6 +192,7 @@ function rendre() {
 
   rendreCotesAuto();
   rendreLegende();
+  majPoigneesAuRendu();
   $<HTMLInputElement>('taille').value = String(k);
   layer.draw(); // synchrone : les nouveaux nœuds sont cliquables tout de suite, sans attendre la prochaine frame
   majStatut();
@@ -388,7 +401,7 @@ function majStatut() {
   $('statut').textContent = calib
     ? `Calibration : cliquez le ${calib.length ? 'second' : 'premier'} point d'une distance connue (Échap pour annuler)`
     : estLiaison(outil)
-      ? `Tracé : ${LIAISONS[outil].nom} — cliquez les points (Maj = horizontal/vertical), re-cliquez le dernier point ou Entrée pour terminer`
+      ? `Tracé : ${LIAISONS[outil].nom} — cliquez les points (Maj = horizontal/vertical) ; un clic sur un équipement s'y accroche et enchaîne vers le suivant ; Entrée ou re-clic pour terminer`
       : outil
         ? `Pose : ${SYMBOLES[outil].nom}${SYMBOLES[outil].libre || SYMBOLES[outil].mural ? '' : ' (se plaque au mur le plus proche)'} — cliquez, puis ✓, clic sur l'aperçu ou Entrée pour valider · R pivote · Échap annule`
         : 'Sélection — glisser pour déplacer, R pour pivoter, Suppr pour effacer, molette pour zoomer';
@@ -415,9 +428,15 @@ let rotPose = 0; // rotation choisie avec R pour les symboles posés librement (
 function objetPose(p: Point): Objet {
   const s = SYMBOLES[outil!];
   const o: Objet = { id: 0, type: outil!, x: p.x, y: p.y, rot: rotPose, props: s.hauteur ? { hauteur: String(s.hauteur) } : {} };
+  caler(o);
+  return o;
+}
+
+// Calage commun à la pose et au déplacement.
+function caler(o: Objet) {
+  const s = SYMBOLES[o.type];
   if (s.mural) aimanterObjet(o);
   else if (!s.libre) plaquerAuMur(o);
-  return o;
 }
 
 // Contre la face du mur le plus proche (s'il est à moins d'un symbole et demi), le haut du symbole tourné vers le mur.
@@ -501,20 +520,82 @@ function pointTrace(p: Point, ortho: boolean): Point {
   return Math.abs(p.x - x) > Math.abs(p.y - y) ? { x: p.x, y } : { x, y: p.y };
 }
 
-function majApercu(q: Point) {
+// q : point visé ; accroche : il tombe sur un équipement (repère vert).
+function majApercu(q: Point, accroche = false) {
   reperes.destroyChildren();
   // Un masque blanc serait invisible pendant le tracé : aperçu en gris.
-  reperes.add(new Konva.Line({ points: [...trace, q.x, q.y], ...styleLiaison(outil!, {}), ...(outil === 'masque' && { stroke: '#9ca3af' }), opacity: 0.6 }));
+  if (trace.length) reperes.add(new Konva.Line({ points: [...trace, q.x, q.y], ...styleLiaison(outil!, {}), ...(outil === 'masque' && { stroke: '#9ca3af' }), opacity: 0.6 }));
+  if (accroche) reperes.add(new Konva.Circle({ x: q.x, y: q.y, radius: 9 / stage.scaleX(), stroke: '#16a34a', strokeWidth: 3 / stage.scaleX() }));
 }
 
 function terminerTrace() {
   if (trace.length >= 4) {
-    projet.liaisons.push({ id: nouvelId(), type: outil!, points: trace, props: {} });
+    // Extrémités posées sur un équipement : la liaison y reste accrochée et le suivra.
+    const sur = (x: number, y: number) => projet.objets.find((o) => o.x === x && o.y === y && SYMBOLES[o.type].calque === LIAISONS[outil!].calque)?.id;
+    const debut = sur(trace[0], trace[1]), fin = sur(trace[trace.length - 2], trace[trace.length - 1]);
+    projet.liaisons.push({ id: nouvelId(), type: outil!, points: trace, props: {}, ...(debut !== undefined && { debut }), ...(fin !== undefined && { fin }) });
     valider();
   }
   trace = [];
   reperes.destroyChildren();
   rendre();
+}
+
+// ---------- Accrochage des câbles et tuyaux aux équipements ----------
+// Équipement du même corps de métier (câble → électricité, tuyau → eau…) dont le centre est à portée de p.
+function equipementProche(p: Point, typeLiaison: string): Objet | null {
+  const t = LIAISONS[typeLiaison];
+  if (t.calque === 'structure' || t.cote) return null;
+  let meilleur: Objet | null = null, dMin = Math.max((B / 2) * projet.taille, 10 / stage.scaleX());
+  for (const o of projet.objets) {
+    const d = Math.hypot(o.x - p.x, o.y - p.y);
+    if (SYMBOLES[o.type].calque === t.calque && d <= dMin) [meilleur, dMin] = [o, d];
+  }
+  return meilleur;
+}
+
+// Recale les extrémités accrochées à cet équipement, et leur dessin s'il est affiché (pendant un glisser).
+function suivre(o: Objet) {
+  for (const l of projet.liaisons) {
+    if (l.debut !== o.id && l.fin !== o.id) continue;
+    if (l.debut === o.id) l.points.splice(0, 2, o.x, o.y);
+    if (l.fin === o.id) l.points.splice(-2, 2, o.x, o.y);
+    layer.findOne<Konva.Group>('#' + l.id)?.findOne<Konva.Line>('Line')?.points(l.points.slice());
+  }
+}
+
+// Poignées sur chaque point de la liaison sélectionnée : on la reprend sans la retracer.
+// Une extrémité lâchée sur un équipement s'y accroche ; ailleurs, elle se décroche.
+const poignees = new Konva.Group();
+layer.add(poignees);
+majPoigneesAuRendu = majPoignees;
+function majPoignees() {
+  poignees.destroyChildren();
+  const l = projet.liaisons.find((l) => l.id === selection);
+  if (!l || !groupes[LIAISONS[l.type].calque].listening()) return;
+  const r = 6 / stage.scaleX(), n = l.points.length / 2;
+  for (let i = 0; i < n; i++) {
+    const c = new Konva.Circle({ name: 'poignee', x: l.points[2 * i], y: l.points[2 * i + 1], radius: r, fill: '#fff', stroke: '#2563eb', strokeWidth: 2 / stage.scaleX(), draggable: true });
+    const extremite = i === 0 || i === n - 1;
+    c.on('mouseenter', () => (conteneur.style.cursor = 'move'));
+    c.on('mouseleave', majStatut);
+    c.on('dragmove', () => {
+      const o = extremite ? equipementProche(c.position(), l.type) : null;
+      if (o) c.position({ x: o.x, y: o.y });
+      l.points.splice(2 * i, 2, c.x(), c.y());
+      layer.findOne<Konva.Group>('#' + l.id)?.findOne<Konva.Line>('Line')?.points(l.points.slice());
+    });
+    c.on('dragend', () => {
+      if (extremite) {
+        const cle = i === 0 ? 'debut' : 'fin', o = equipementProche(c.position(), l.type);
+        if (o && o.x === c.x() && o.y === c.y()) l[cle] = o.id;
+        else delete l[cle];
+      }
+      valider();
+      setTimeout(rendre);
+    });
+    poignees.add(c);
+  }
 }
 
 stage.on('click tap', (e) => {
@@ -542,7 +623,8 @@ stage.on('click tap', (e) => {
       majCoords();
     }, 50);
   } else if (estLiaison(outil)) {
-    const q = pointTrace(p, e.evt.shiftKey);
+    const libre = pointTrace(p, e.evt.shiftKey), equipement = equipementProche(libre, outil);
+    const q = equipement ? { x: equipement.x, y: equipement.y } : libre;
     const n = trace.length;
     // Re-cliquer le dernier point (ou double-cliquer) termine la liaison.
     if (n && Math.hypot(q.x - trace[n - 2], q.y - trace[n - 1]) * stage.scaleX() < 8) terminerTrace();
@@ -550,11 +632,17 @@ stage.on('click tap', (e) => {
       trace.push(q.x, q.y);
       majApercu(q);
       if (LIAISONS[outil].cote && trace.length === 4) terminerTrace(); // une cote = deux points
+      else if (equipement && trace.length >= 4) {
+        // Arrivée sur un équipement : la liaison se termine et la suivante part de lui (prise → prise → prise…).
+        terminerTrace();
+        trace = [q.x, q.y];
+        majApercu(q, true);
+      }
     }
   } else if (outil) {
     if (e.target.findAncestor('.valider', true)) confirmer();
     else proposer(p); // un nouveau clic déplace l'aperçu
-  } else {
+  } else if (!e.target.hasName('poignee')) {
     const g = e.target.findAncestor('.objet', true);
     selectionner(g ? Number(g.id()) : null);
   }
@@ -595,7 +683,10 @@ function majCoords() {
 stage.on('mousemove', (e) => {
   majCoords();
   const p = layer.getRelativePointerPosition();
-  if (p && estLiaison(outil) && trace.length) majApercu(pointTrace(p, e.evt.shiftKey));
+  if (p && estLiaison(outil)) {
+    const libre = pointTrace(p, e.evt.shiftKey), equipement = equipementProche(libre, outil);
+    majApercu(equipement ? { x: equipement.x, y: equipement.y } : libre, !!equipement);
+  }
   majFantome(p);
 });
 stage.on('mouseleave', () => majFantome(null));
@@ -995,6 +1086,11 @@ addEventListener('keydown', (e) => {
   else if (k === 'enter' && estLiaison(outil)) terminerTrace();
   else if ((k === 'delete' || k === 'backspace') && cible()) {
     projet.objets = projet.objets.filter((o) => o.id !== selection);
+    for (const l of projet.liaisons) {
+      // Équipement supprimé : ses câbles restent, décrochés.
+      if (l.debut === selection) delete l.debut;
+      if (l.fin === selection) delete l.fin;
+    }
     projet.liaisons = projet.liaisons.filter((l) => l.id !== selection);
     valider();
     selectionner(null);

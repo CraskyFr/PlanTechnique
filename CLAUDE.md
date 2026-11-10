@@ -27,8 +27,8 @@ Les imports gardent l'extension `.ts` (nécessaire pour que Node lance les tests
 ## Feuille de route
 
 1. **MVP (fait)** : import image/PDF, calibration, zoom/déplacement, calques, pose/rotation/suppression de symboles, annuler/rétablir, enregistrer/ouvrir JSON, export PDF (A4, image JPEG embarquée par `src/pdf.ts`, sans dépendance).
-2. **Liaisons (fait)** : câbles et tuyaux en polylignes colorées par type (`LIAISONS` dans `symboles.ts`), propriétés par élément (hauteur de pose, repère, section), légende avec quantités et longueurs. Pas encore : édition des sommets d'une liaison, accrochage aux symboles.
+2. **Liaisons (fait)** : câbles et tuyaux en polylignes colorées par type (`LIAISONS` dans `symboles.ts`), propriétés par élément (hauteur de pose, repère, section), légende avec quantités et longueurs. Extrémités accrochées aux équipements du même calque (`Liaison.debut` / `fin` = id d'objet, `suivre()` les recale quand l'équipement bouge), poignées pour déplacer les points (`majPoignees()`).
 3. **Structure (fait)** : calque Structure. Cloison, cloison à démolir et masque blanc sont des `LIAISONS` avec `epaisseur` (trait à l'échelle réelle) ; porte et fenêtre sont des `SYMBOLES` avec `mural` (largeur réelle, aimantés aux cloisons tracées via `aimanter()`). Pas encore : miroir de porte (sens des gonds), aimantation aux murs de l'image importée.
 4. **Confort (fait)** : étages multiples (fichier `{ etages: [...] }`, anciens fichiers mono-étage toujours lus ; `projet` dans `main.ts` = étage affiché), cotes (`LIAISONS.cote`), nomenclature CSV (`nomenclature()`), impression à l'échelle via `window.print()` et `@page` (pas de bibliothèque PDF), verrou de calque.
 
-Idées non faites : édition des sommets d'une liaison, accrochage des câbles aux symboles, miroir de porte, impression en mosaïque au-delà de l'A3, copie d'éléments entre étages, sauvegarde automatique.
+Idées non faites : ajout/suppression de points sur une liaison existante, impression en mosaïque au-delà de l'A3, copie d'éléments entre étages, sauvegarde automatique.

@@ -8,7 +8,7 @@ const etage = {
   taille: 2,
   fond: 'data:image/png;base64,AA',
   objets: [{ id: 1, type: 'prise16', x: 5, y: 6, rot: 90, props: { repere: 'C3', hauteur: '30' } }],
-  liaisons: [{ id: 2, type: 'cable', points: [0, 0, 300, 400], props: { section: '3G2,5' } }],
+  liaisons: [{ id: 2, type: 'cable', points: [0, 0, 300, 400], props: { section: '3G2,5' }, debut: 1 }], // accroché à la prise 1
 };
 
 test('échelle : 500 px pour 5 m donne 1 cm par pixel', () => {

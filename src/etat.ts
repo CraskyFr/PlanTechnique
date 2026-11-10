@@ -4,7 +4,8 @@ import { CALQUES, LIAISONS, SYMBOLES } from './symboles.ts';
 export type Point = { x: number; y: number };
 export type Props = Record<string, string>; // repere, hauteur, section… (texte libre)
 export type Objet = { id: number; type: string; x: number; y: number; rot: number; props: Props };
-export type Liaison = { id: number; type: string; points: number[]; props: Props }; // points à plat : x0, y0, x1, y1…
+// points à plat : x0, y0, x1, y1… ; debut / fin : id de l'équipement auquel chaque extrémité est accrochée.
+export type Liaison = { id: number; type: string; points: number[]; props: Props; debut?: number; fin?: number };
 // Un projet est une liste d'étages ; chacun a son propre plan de fond et sa propre échelle.
 export type Etage = {
   nom: string;
@@ -103,7 +104,7 @@ function lireEtage(d: any, nomParDefaut: string): Etage {
     const pts = l?.points;
     if (!l || !fini(l.id) || !Object.hasOwn(LIAISONS, l.type) || !Array.isArray(pts) || pts.length < 4 || pts.length % 2 || !pts.every(fini))
       throw new Error(`Liaison n°${i + 1} invalide ou de type inconnu.`);
-    return { id: l.id, type: l.type, points: pts, props: lireProps(l.props) };
+    return { id: l.id, type: l.type, points: pts, props: lireProps(l.props), ...(fini(l.debut) && { debut: l.debut }), ...(fini(l.fin) && { fin: l.fin }) };
   });
   // Seules les images embarquées sont acceptées : jamais d'URL distante.
   if (d.fond != null && !(typeof d.fond === 'string' && d.fond.startsWith('data:image/')))
