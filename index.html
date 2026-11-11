@@ -62,11 +62,33 @@
       #props .fait { margin-top: 8px; }
       #props .fait input { width: auto; }
       #palette button { display: flex; align-items: center; gap: 8px; width: 100%; margin: 2px 0; padding: 3px 8px; text-align: left; border-color: transparent; }
+      #palette button[hidden], #palette details[hidden] { display: none; }
       #palette button.actif { border-color: currentColor; background: #eff6ff; }
       #palette svg { width: 26px; height: 26px; flex: none; }
       #palette span { color: #1f2937; }
       footer { grid-area: bas; display: flex; justify-content: space-between; gap: 12px; padding: 4px 12px; background: #fff; border-top: 1px solid #d1d5db; font-size: 13px; color: #4b5563; }
       .calque { display: flex; justify-content: space-between; }
+      .onglets { position: sticky; top: -8px; z-index: 1; display: flex; gap: 4px; margin: -8px -12px 8px; padding: 8px 12px 0; background: #fff; border-bottom: 1px solid #d1d5db; }
+      .onglets button { flex: 1; border: 1px solid transparent; border-bottom: none; border-radius: 6px 6px 0 0; font-weight: 600; color: #4b5563; }
+      .onglets button[aria-selected='true'] { color: #1d4ed8; border-color: #d1d5db; background: #fff; margin-bottom: -1px; }
+      .pastille { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 9px; background: #b45309; color: #fff; font-size: 11px; }
+      .pastille[hidden] { display: none; }
+      .champ { margin: 8px 0 !important; font-size: 13px; }
+      .champ input, #recherche { width: 100%; font: inherit; font-size: 13px; padding: 4px 6px; border: 1px solid #9ca3af; border-radius: 4px; }
+      #recherche { margin: 4px 0 6px; }
+      #accueil { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; color: #4b5563; pointer-events: none; }
+      #accueil > * { pointer-events: auto; max-width: 520px; }
+      #accueil h1 { margin: 0; font-size: 22px; color: #1f2937; }
+      #accueil[hidden] { display: none; }
+      main.depot::after { content: 'Déposez le plan (PDF ou image) ou le projet (.json)'; position: absolute; inset: 12px; display: flex; align-items: center; justify-content: center; border: 3px dashed #1d4ed8; border-radius: 12px; background: rgb(239 246 255 / 0.85); color: #1d4ed8; font-size: 18px; font-weight: 600; pointer-events: none; }
+      dialog { border: 1px solid #d1d5db; border-radius: 10px; padding: 18px 22px; max-width: 560px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.2); }
+      dialog h2 { margin: 0 0 10px; font-size: 18px; }
+      dialog dl { display: grid; grid-template-columns: auto 1fr; gap: 6px 14px; margin: 0 0 14px; font-size: 14px; }
+      dialog dt { font-weight: 600; white-space: nowrap; }
+      dialog dd { margin: 0; color: #4b5563; }
+      #props .actions { display: flex; gap: 6px; margin-top: 10px; }
+      #props .actions button { flex: 1; font-size: 13px; padding: 3px 6px; }
+      #props .actions .danger { color: #b91c1c; border-color: #fca5a5; }
       #impression { display: none; }
       @media print {
         html, body { height: auto; }
@@ -102,10 +124,21 @@
         <button id="b-annuler" class="icone" title="Annuler (Ctrl+Z)" aria-label="Annuler">↶</button>
         <button id="b-refaire" class="icone" title="Rétablir (Ctrl+Y)" aria-label="Rétablir">↷</button>
       </div>
-      <button id="b-ajuster" title="Voir tout le plan (touche 0)">Ajuster la vue</button>
+      <div class="groupe" role="group" aria-label="Vue">
+        <button id="b-dezoomer" class="icone" title="Dézoomer (molette)" aria-label="Dézoomer">−</button>
+        <button id="b-zoomer" class="icone" title="Zoomer (molette)" aria-label="Zoomer">+</button>
+        <button id="b-ajuster" title="Voir tout le plan (touche 0)">Ajuster la vue</button>
+      </div>
+      <button id="b-aide" class="icone" title="Raccourcis clavier (touche ?)" aria-label="Aide et raccourcis clavier">?</button>
     </header>
     <aside>
-      <details open>
+      <!-- Deux onglets : dessiner (outils, calques) et vérifier (bilans, contrôles, devis). -->
+      <div class="onglets" role="tablist" aria-label="Panneaux">
+        <button role="tab" id="t-dessiner" aria-selected="true" aria-controls="onglet-dessiner">Dessiner</button>
+        <button role="tab" id="t-verifier" aria-selected="false" aria-controls="onglet-verifier">Vérifier <span id="nb-alertes" class="pastille" hidden></span></button>
+      </div>
+      <div id="onglet-dessiner" role="tabpanel" aria-labelledby="t-dessiner">
+      <details>
         <summary>Calques</summary>
         <div id="calques"></div>
       </details>
@@ -114,9 +147,13 @@
         <label>Opacité du fond <input id="opacite" type="range" min="0.1" max="1" step="0.05" value="0.6" /></label>
         <label>Taille des symboles <input id="taille" type="range" min="0.5" max="12" step="0.1" /></label>
       </details>
+      <label class="champ">Circuit des prochaines poses <input id="circuit" type="text" maxlength="12" placeholder="ex. C3 — affecté aux équipements électriques" /></label>
+      <input id="recherche" type="search" placeholder="Chercher un symbole… (prise, radiateur…)" aria-label="Chercher un symbole" />
+      <div id="palette"></div>
+      </div>
+      <div id="onglet-verifier" role="tabpanel" aria-labelledby="t-verifier" hidden>
       <details open>
         <summary>Circuits électriques</summary>
-        <label>Circuit des prochaines poses <input id="circuit" type="text" maxlength="12" placeholder="ex. C3" /></label>
         <ul id="circuits"></ul>
         <button id="b-unifilaire" class="pleine" title="Tableau proposé : différentiels, disjoncteurs et sections, en PDF">Schéma unifilaire (PDF)</button>
       </details>
@@ -137,12 +174,38 @@
         <summary>Avancement du chantier</summary>
         <ul id="avancement" class="liste"></ul>
       </details>
-      <div id="palette"></div>
+      </div>
     </aside>
     <main>
       <div id="plan"></div>
       <section id="props" aria-label="Propriétés de l'élément sélectionné" hidden></section>
+      <!-- Accueil, tant que l'étage est vide : on peut aussi déposer le fichier n'importe où sur le plan. -->
+      <div id="accueil">
+        <h1>Commencez par votre plan</h1>
+        <p>Glissez ici un plan Kazaplan (PDF ou image) : murs, portes, fenêtres et échelle sont reconnus automatiquement.</p>
+        <div class="groupe">
+          <label class="btn principal">Importer un plan<input id="f-fond-accueil" class="vh" type="file" accept="image/*,application/pdf" /></label>
+          <label class="btn">Ouvrir un projet<input id="f-projet-accueil" class="vh" type="file" accept=".json,application/json" /></label>
+        </div>
+      </div>
     </main>
+    <dialog id="aide" aria-labelledby="aide-titre">
+      <h2 id="aide-titre">Raccourcis et gestes</h2>
+      <dl>
+        <dt>Molette · glisser le fond</dt><dd>Zoomer · se déplacer sur le plan</dd>
+        <dt>0</dt><dd>Voir tout le plan</dd>
+        <dt>Clic, puis ✓ ou Entrée</dt><dd>Poser l'équipement choisi (aperçu plaqué au mur)</dd>
+        <dt>Clics successifs, Entrée</dt><dd>Tracer un câble, un tuyau, une cloison ; Maj = horizontal / vertical</dd>
+        <dt>R · M</dt><dd>Pivoter · inverser les gonds d'une porte</dd>
+        <dt>F</dt><dd>Marquer fait / posé (suivi de chantier)</dd>
+        <dt>Suppr</dt><dd>Supprimer l'élément sélectionné</dd>
+        <dt>Ctrl+C · Ctrl+V · Ctrl+D</dt><dd>Copier · coller sous le curseur · dupliquer</dd>
+        <dt>Ctrl+Z · Ctrl+Y</dt><dd>Annuler · rétablir</dd>
+        <dt>Ctrl+S</dt><dd>Enregistrer le projet</dd>
+        <dt>Échap</dt><dd>Annuler l'aperçu, puis quitter l'outil</dd>
+      </dl>
+      <form method="dialog"><button class="principal">Fermer</button></form>
+    </dialog>
     <footer><span id="statut"></span><span id="coords"></span></footer>
     <div id="impression"><img id="impression-img" alt="" /><p id="impression-titre"></p></div>
     <script type="module" src="/src/main.ts"></script>

@@ -249,6 +249,11 @@ function rendre() {
   majAvancement();
   majReseaux();
   majMetre();
+  // Accueil tant que l'étage est vide ; nombre d'alertes sur l'onglet Vérifier, pour qu'on aille voir.
+  $('accueil').hidden = !!projet.fond || !!projet.objets.length || !!projet.liaisons.length;
+  const alertes = document.querySelectorAll('#onglet-verifier .alerte').length;
+  $('nb-alertes').hidden = !alertes;
+  $('nb-alertes').textContent = String(alertes);
   // Prises et commandes interdites dans les volumes de salle de bain : cerclées de rouge.
   for (const { o } of horsVolumes()) groupes.elec.add(new Konva.Circle({ x: o.x, y: o.y, radius: B * k * 0.8, stroke: '#dc2626', strokeWidth: 0.6 * k, listening: false }));
   layer.batchDraw();
@@ -549,10 +554,18 @@ function majCircuits() {
     if (c.nom) {
       li.tabIndex = 0;
       li.title = 'Utiliser ce circuit pour les prochaines poses';
-      li.onclick = () => (($<HTMLInputElement>('circuit').value = c.nom), majFantome(null));
+      li.onclick = () => (($<HTMLInputElement>('circuit').value = c.nom), afficherOnglet('dessiner'), majFantome(null));
     }
     return li;
   });
+  // Sans circuit nommé, pas de tableau à proposer : on explique comment en créer un.
+  const nommes = circuits.some((c) => c.nom);
+  $('b-unifilaire').hidden = !nommes;
+  if (!nommes)
+    return $('circuits').replaceChildren(
+      ...lignes,
+      element('li', 'Pour obtenir le bilan et le tableau : dans l\'onglet Dessiner, saisissez un circuit (ex. C1) puis posez prises et éclairages, ou renseignez « Circuit / repère » dans Propriétés.', 'conseil'),
+    );
   const diffs = tableau(circuits, surfaceLogement());
   $('circuits').replaceChildren(
     ...lignes,
@@ -666,7 +679,9 @@ function majPieces() {
   choixIsolation.onchange = () => ((projet.isolation = choixIsolation.value), valider(), rendre());
   entete.append('Isolation : ', choixIsolation);
   const daaf = etages.some((et) => et.objets.some((o) => o.type === 'daaf'));
-  const globales = [element('li', daaf ? 'Détecteur de fumée ✓' : 'Aucun détecteur de fumée (1 obligatoire par logement)', daaf ? '' : 'alerte')];
+  // Alerte seulement une fois l'électricité commencée : pas de bruit sur un projet vide.
+  const elecCommencee = etages.some((et) => et.objets.some((o) => SYMBOLES[o.type].calque === 'elec'));
+  const globales = [element('li', daaf ? 'Détecteur de fumée ✓' : 'Aucun détecteur de fumée (1 obligatoire par logement)', daaf || !elecCommencee ? '' : 'alerte')];
   for (const v of horsVolumes())
     globales.push(element('li', `${SYMBOLES[v.o.type].nom} dans le volume ${v.volume} de la ${SYMBOLES[v.appareil.type].nom.toLowerCase()} : interdit, à déplacer (repéré en rouge).`, 'alerte'));
   if (!cotesCache?.salles.length) {
@@ -1485,6 +1500,19 @@ function majProps() {
     `<label class="fait"><input type="checkbox" data-fait> Fait / posé (touche F)</label>`;
   for (const i of el.querySelectorAll<HTMLInputElement>('input[data-champ]')) i.value = c.props[i.dataset.champ!] ?? ''; // via .value : jamais interprété comme du HTML
   el.querySelector<HTMLInputElement>('[data-fait]')!.checked = !!c.props.fait;
+  const actions = element('div', '', 'actions');
+  const bouton = (action: string, texte: string, titre: string, classe = '') => {
+    const b = element('button', texte, classe);
+    Object.assign(b.dataset, { action });
+    b.title = titre;
+    return b;
+  };
+  actions.append(
+    ...(liaison ? [] : [bouton('pivoter', 'Pivoter', 'Pivoter (R)')]),
+    bouton('dupliquer', 'Dupliquer', 'Dupliquer (Ctrl+D)'),
+    bouton('supprimer', 'Supprimer', 'Supprimer (Suppr)', 'danger'),
+  );
+  el.append(actions);
 }
 $('props').addEventListener('input', (e) => {
   const i = e.target as HTMLInputElement;
@@ -1521,6 +1549,95 @@ const surFichier = (id: string, f: (fichier: File) => void) =>
   });
 surFichier('f-fond', importerFond);
 surFichier('f-projet', ouvrir);
+surFichier('f-fond-accueil', importerFond);
+surFichier('f-projet-accueil', ouvrir);
+
+// ---------- Ergonomie générale ----------
+// Onglets de la colonne de gauche : Dessiner (outils) / Vérifier (bilans, contrôles, devis).
+function afficherOnglet(nom: 'dessiner' | 'verifier') {
+  for (const n of ['dessiner', 'verifier']) {
+    $(`t-${n}`).setAttribute('aria-selected', String(n === nom));
+    $(`onglet-${n}`).hidden = n !== nom;
+  }
+}
+$('t-dessiner').onclick = () => afficherOnglet('dessiner');
+$('t-verifier').onclick = () => afficherOnglet('verifier');
+
+// Déposer un fichier n'importe où sur le plan : un .json ouvre le projet, une image ou un PDF devient le plan de fond.
+const zonePlan = document.querySelector('main')!;
+zonePlan.addEventListener('dragover', (e) => {
+  if (!e.dataTransfer?.types.includes('Files')) return;
+  e.preventDefault();
+  zonePlan.classList.add('depot');
+});
+zonePlan.addEventListener('dragleave', (e) => {
+  if (!zonePlan.contains(e.relatedTarget as Node)) zonePlan.classList.remove('depot');
+});
+zonePlan.addEventListener('drop', (e) => {
+  e.preventDefault();
+  zonePlan.classList.remove('depot');
+  const f = e.dataTransfer?.files[0];
+  if (!f) return;
+  if (f.name.toLowerCase().endsWith('.json')) ouvrir(f);
+  else if (f.type === 'application/pdf' || f.type.startsWith('image/')) importerFond(f);
+  else alert('Format non reconnu : déposez un PDF, une image ou un projet .json.');
+});
+
+// Recherche dans la palette, sans tenir compte des accents ni des majuscules.
+const sansAccents = (t: string) => t.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+$<HTMLInputElement>('recherche').addEventListener('input', (e) => {
+  const q = sansAccents((e.target as HTMLInputElement).value.trim());
+  for (const d of $('palette').querySelectorAll('details')) {
+    let visibles = 0;
+    for (const b of d.querySelectorAll<HTMLButtonElement>('button[data-type]')) {
+      b.hidden = !!q && !sansAccents(b.textContent ?? '').includes(q);
+      visibles += +!b.hidden;
+    }
+    d.hidden = !visibles;
+    if (q) d.open = true;
+  }
+});
+
+// Zoom au bouton, centré sur la vue.
+function zoomer(facteur: number) {
+  const centre = { x: stage.width() / 2, y: stage.height() / 2 };
+  const avant = stage.scaleX(), apres = Math.min(40, Math.max(0.02, avant * facteur));
+  stage.position({ x: centre.x - ((centre.x - stage.x()) * apres) / avant, y: centre.y - ((centre.y - stage.y()) * apres) / avant });
+  stage.scale({ x: apres, y: apres });
+}
+$('b-zoomer').onclick = () => zoomer(1.3);
+$('b-dezoomer').onclick = () => zoomer(1 / 1.3);
+
+// Aide : la liste des raccourcis et gestes.
+const aide = $<HTMLDialogElement>('aide');
+$('b-aide').onclick = () => aide.showModal();
+
+// Actions de l'élément sélectionné, aussi en boutons dans Propriétés (pour qui ne connaît pas les raccourcis).
+function supprimerSelection() {
+  if (!cible()) return;
+  projet.objets = projet.objets.filter((o) => o.id !== selection);
+  for (const l of projet.liaisons) {
+    // Équipement supprimé : ses câbles restent, décrochés.
+    if (l.debut === selection) delete l.debut;
+    if (l.fin === selection) delete l.fin;
+  }
+  projet.liaisons = projet.liaisons.filter((l) => l.id !== selection);
+  valider();
+  selectionner(null);
+}
+function pivoterSelection() {
+  const o = projet.objets.find((o) => o.id === selection);
+  if (!o) return;
+  o.rot = (o.rot + (SYMBOLES[o.type].mural ? 180 : 90)) % 360; // porte/fenêtre : bascule de l'autre côté du mur
+  valider();
+  rendre();
+}
+$('props').addEventListener('click', (e) => {
+  const action = (e.target as HTMLElement).closest<HTMLButtonElement>('button[data-action]')?.dataset.action;
+  if (action === 'supprimer') supprimerSelection();
+  else if (action === 'dupliquer' && cible()) coller(cible()!, null);
+  else if (action === 'pivoter') pivoterSelection();
+});
 
 $('b-sauver').onclick = enregistrer;
 $('b-pdf').onclick = exporterPdf;
@@ -1557,11 +1674,12 @@ $('b-annuler').onclick = () => appliquer(hist.annuler());
 $('b-refaire').onclick = () => appliquer(hist.refaire());
 
 addEventListener('keydown', (e) => {
-  // Dans un champ texte, les touches servent à écrire (R, Suppr, Ctrl+Z natif…).
-  if (e.target instanceof HTMLInputElement && e.target.type === 'text') return;
   const ctrl = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
-  if (ctrl && k === 's') (e.preventDefault(), enregistrer());
+  if (ctrl && k === 's') return void (e.preventDefault(), enregistrer()); // partout, même dans un champ
+  // Dans un champ (texte, nombre, recherche, liste), les touches servent à saisir : R, Suppr, Ctrl+Z natif…
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+  if (k === '?') aide.showModal();
   else if (ctrl && k === 'c' && cible()) pressePapiers = structuredClone(cible()!);
   else if (ctrl && k === 'v' && pressePapiers) (e.preventDefault(), coller(pressePapiers, layer.getRelativePointerPosition()));
   else if (ctrl && k === 'd' && cible()) (e.preventDefault(), coller(cible()!, null));
@@ -1574,17 +1692,8 @@ addEventListener('keydown', (e) => {
     selectionner(null);
   } else if (k === 'enter' && enAttente) confirmer();
   else if (k === 'enter' && estLiaison(outil)) terminerTrace();
-  else if ((k === 'delete' || k === 'backspace') && cible()) {
-    projet.objets = projet.objets.filter((o) => o.id !== selection);
-    for (const l of projet.liaisons) {
-      // Équipement supprimé : ses câbles restent, décrochés.
-      if (l.debut === selection) delete l.debut;
-      if (l.fin === selection) delete l.fin;
-    }
-    projet.liaisons = projet.liaisons.filter((l) => l.id !== selection);
-    valider();
-    selectionner(null);
-  } else if (k === 'f' && !ctrl && cible()) {
+  else if ((k === 'delete' || k === 'backspace') && cible()) supprimerSelection();
+  else if (k === 'f' && !ctrl && cible()) {
     basculerFait(cible()!);
     valider();
     rendre();
@@ -1603,13 +1712,7 @@ addEventListener('keydown', (e) => {
     rotPose = (rotPose + pas) % 360;
     if (enAttente) (enAttente.rot = (enAttente.rot + pas) % 360), afficherAttente();
     majFantome(layer.getRelativePointerPosition());
-  } else if (k === 'r' && !ctrl) {
-    const o = projet.objets.find((o) => o.id === selection);
-    if (!o) return;
-    o.rot = (o.rot + (SYMBOLES[o.type].mural ? 180 : 90)) % 360; // porte/fenêtre : bascule de l'autre côté du mur
-    valider();
-    rendre();
-  }
+  } else if (k === 'r' && !ctrl) pivoterSelection();
 });
 
 addEventListener('beforeunload', (e) => {
