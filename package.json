@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
-    "test": "node --test src/etat.test.ts src/detection.test.ts src/cotes.test.ts src/pieces.test.ts src/pdf.test.ts"
+    "test": "node --test src/etat.test.ts src/detection.test.ts src/cotes.test.ts src/pieces.test.ts src/pdf.test.ts src/calculs.test.ts"
   },
   "dependencies": {
     "konva": "^10.9.1",

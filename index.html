@@ -50,6 +50,15 @@
       .liste li { padding: 4px 0; border-bottom: 1px solid #f3f4f6; }
       .liste select { font: inherit; font-size: 12px; margin-left: 6px; }
       .liste progress { display: block; width: 100%; height: 6px; }
+      .protection { color: #4b5563; font-size: 12px; }
+      .conseil { color: #1d4ed8; font-size: 12px; }
+      li.titre { font-weight: 600; margin-top: 6px; border-top: 1px solid #d1d5db; }
+      .pleine { width: 100%; margin-top: 6px; }
+      .liste input[type='number'] { width: 70px; font: inherit; font-size: 12px; padding: 1px 4px; }
+      .ligne-metre { display: grid; grid-template-columns: 1fr auto; gap: 2px 6px; align-items: center; }
+      .ligne-metre .montant { grid-column: 1 / -1; text-align: right; color: #4b5563; font-size: 12px; }
+      #reseaux li { cursor: pointer; }
+      #reseaux li:hover, #reseaux li.actif { background: #eff6ff; }
       #props .fait { margin-top: 8px; }
       #props .fait input { width: auto; }
       #palette button { display: flex; align-items: center; gap: 8px; width: 100%; margin: 2px 0; padding: 3px 8px; text-align: left; border-color: transparent; }
@@ -109,10 +118,20 @@
         <summary>Circuits électriques</summary>
         <label>Circuit des prochaines poses <input id="circuit" type="text" maxlength="12" placeholder="ex. C3" /></label>
         <ul id="circuits"></ul>
+        <button id="b-unifilaire" class="pleine" title="Tableau proposé : différentiels, disjoncteurs et sections, en PDF">Schéma unifilaire (PDF)</button>
+      </details>
+      <details>
+        <summary>Réseaux (longueurs)</summary>
+        <ul id="reseaux" class="liste"></ul>
       </details>
       <details>
         <summary>Pièces</summary>
         <ul id="pieces" class="liste"></ul>
+      </details>
+      <details>
+        <summary>Métré et devis</summary>
+        <ul id="metre" class="liste"></ul>
+        <button id="b-devis" class="pleine" title="Quantités, prix unitaires et montants, pour Excel">Exporter le devis (CSV)</button>
       </details>
       <details>
         <summary>Avancement du chantier</summary>

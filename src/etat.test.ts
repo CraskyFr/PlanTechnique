@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Historique, aimanter, bilanCircuits, manquesPiece, echelleDepuis, lireProjet, longueur, nomenclature } from './etat.ts';
+import { Historique, aimanter, bilanCircuits, manquesPiece, reseaux, echelleDepuis, lireProjet, longueur, nomenclature } from './etat.ts';
 
 const etage = {
   nom: 'RDC',
@@ -85,6 +85,30 @@ test('manquesPiece : minimums par type de pièce', () => {
 test('lireProjet : types de pièces gardés, entrées invalides ignorées', () => {
   const [lu] = lireProjet(JSON.stringify({ objets: [], pieces: [{ x: 1, y: 2, type: 'cuisine' }, { x: 1, y: 2, type: 'grenier' }, { x: 'a', y: 2, type: 'wc' }] }));
   assert.deepEqual(lu.pieces, [{ x: 1, y: 2, type: 'cuisine' }]);
+});
+
+test('reseaux : tronçons reliés par un équipement ou un piquage, longueur totale', () => {
+  const l = (id: number, type: string, points: number[], plus = {}) => ({ id, type, points, props: {}, ...plus });
+  const objets = [{ id: 1, type: 'prise16', x: 0, y: 0, rot: 0, props: { repere: 'C1' } }, { id: 2, type: 'prise16', x: 100, y: 0, rot: 0, props: {} }];
+  const res = reseaux(
+    [
+      l(10, 'cable', [0, 0, 100, 0], { debut: 1, fin: 2 }),
+      l(11, 'cable', [100, 0, 100, 50], { debut: 2 }), // repart de la prise 2
+      l(12, 'cable', [500, 0, 600, 0]), // isolé
+      l(20, 'tuyauEf', [0, 100, 300, 100]),
+      l(21, 'tuyauEf', [150, 101, 150, 200]), // piquage sur le 20, à 1 px près
+      l(22, 'tuyauEc', [0, 100, 50, 100]), // même tracé, autre type : pas relié
+      l(30, 'cloison', [0, 0, 0, 100]), // structure : ignorée
+    ],
+    objets,
+    2,
+  );
+  assert.deepEqual(res.map((r) => [r.type, r.liaisons.sort(), r.longueur, r.circuits]), [
+    ['cable', [10, 11], 150, ['C1']],
+    ['cable', [12], 100, []],
+    ['tuyauEc', [22], 50, []],
+    ['tuyauEf', [20, 21], 399, []],
+  ]);
 });
 
 test('historique : annuler, rétablir, et une nouvelle action efface le futur', () => {

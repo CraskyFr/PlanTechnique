@@ -11,6 +11,7 @@ export type Symbole = {
   masque?: string; // tracé rempli de blanc sous le symbole, pour « ouvrir » le mur
   libre?: boolean; // posé où l'on clique ; sinon plaqué contre le mur le plus proche, le haut du symbole côté mur
   hauteur?: number; // hauteur de pose proposée à la pose, en cm (modifiable dans Propriétés)
+  dimensions?: [number, number]; // appareil dessiné à l'échelle : largeur et profondeur par défaut en cm
 };
 
 export const CALQUES = [
@@ -90,6 +91,9 @@ export const SYMBOLES: Record<string, Symbole> = {
   baie: { calque: 'reseau', nom: 'Baie de brassage', d: CARRE, texte: 'BAIE' },
   interphone: { calque: 'reseau', nom: 'Interphone', d: RECT, texte: 'INT', hauteur: 150 },
 
+  // Appareils sanitaires à l'échelle : ils définissent les volumes 1 et 2 de la salle de bain (NF C 15-100).
+  baignoire: { calque: 'eau', nom: 'Baignoire', d: 'M0 0 H24 V24 H0 Z M3 3 H21 V21 H3 Z M17 12 a1.5 1.5 0 1 0 3 0 a1.5 1.5 0 1 0 -3 0', dimensions: [170, 70] },
+  douche: { calque: 'eau', nom: 'Douche', d: 'M0 0 H24 V24 H0 Z M0 0 L24 24 M24 0 L0 24 M10.5 12 a1.5 1.5 0 1 0 3 0 a1.5 1.5 0 1 0 -3 0', dimensions: [90, 90] },
   // AEP (adduction d'eau potable) : arrivée du réseau public, robinet d'eau potable. « EP » désigne les eaux pluviales.
   aep: { calque: 'eau', nom: 'Eau potable', d: CERCLE, texte: 'AEP' },
   ef: { calque: 'eau', nom: 'Eau froide', d: CERCLE, texte: 'EF' },
@@ -103,4 +107,8 @@ export const SYMBOLES: Record<string, Symbole> = {
   chaudiere: { calque: 'chauffage', nom: 'Chaudière', d: CARRE, texte: 'CH' },
   thermostat: { calque: 'chauffage', nom: 'Thermostat', d: CERCLE, texte: 'T', hauteur: 150 },
   vmc: { calque: 'chauffage', nom: 'Bouche VMC', d: CERCLE, texte: 'VMC', libre: true }, // au plafond
+  // Entrée d'air en haut de menuiserie (pièces sèches) : se plaque sous la fenêtre ou contre le mur.
+  mortaise: { calque: 'chauffage', nom: 'Mortaise de ventilation', d: 'M2 9 H22 V15 H2 Z M6 9 V15 M10 9 V15 M14 9 V15 M18 9 V15' },
+  // Unité extérieure de la pompe à chaleur : caisson et ventilateur, plaquée contre la façade.
+  pacExt: { calque: 'chauffage', nom: 'Unité extérieure PAC', d: 'M2 4 H22 V20 H2 Z M7 12 a5 5 0 1 0 10 0 a5 5 0 1 0 -10 0 M12 7 V17 M7 12 H17' },
 };

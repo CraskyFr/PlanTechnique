@@ -16,6 +16,8 @@ export type Etage = {
   liaisons: Liaison[];
   // Type de chaque pièce détectée, mémorisé par un point situé dedans (les pièces sont recalculées à chaque fois).
   pieces?: { x: number; y: number; type: string }[];
+  hsp?: number; // hauteur sous plafond en mètres (montées de câbles, volume chauffé) ; 2,50 par défaut
+  isolation?: string; // bonne | moyenne | faible (puissance de chauffage conseillée)
 };
 
 // ---------- Vérification par pièce (minimums simplifiés de la NF C 15-100, à faire valider par l'électricien) ----------
@@ -86,7 +88,8 @@ const PRISES = ['prise16', 'priseExt'];
 const ECLAIRAGE = ['lumiere', 'spot'];
 const DEDIES = ['prise32', 'priseSpe']; // cuisson, lave-linge, four… : un circuit à eux seuls
 
-export type Circuit = { nom: string; prises: number; eclairage: number; dedies: number; autres: number; alertes: string[] };
+// dedies : prises spécialisées et 32 A ; cuisson : dont prises 32 A (plaque, cuisinière).
+export type Circuit = { nom: string; prises: number; eclairage: number; dedies: number; cuisson: number; autres: number; alertes: string[] };
 
 /** Bilan par circuit (champ « Circuit / repère ») des équipements électriques d'un étage, avec les alertes. */
 export function bilanCircuits(objets: Objet[]): Circuit[] {
@@ -94,7 +97,8 @@ export function bilanCircuits(objets: Objet[]): Circuit[] {
   for (const o of objets) {
     if (SYMBOLES[o.type]?.calque !== 'elec') continue;
     const nom = o.props.repere?.trim() || '';
-    const c = parNom.get(nom) ?? { nom, prises: 0, eclairage: 0, dedies: 0, autres: 0, alertes: [] };
+    const c = parNom.get(nom) ?? { nom, prises: 0, eclairage: 0, dedies: 0, cuisson: 0, autres: 0, alertes: [] };
+    if (o.type === 'prise32') c.cuisson++;
     if (PRISES.includes(o.type)) c.prises++;
     else if (ECLAIRAGE.includes(o.type)) c.eclairage++;
     else if (DEDIES.includes(o.type)) c.dedies++;
@@ -110,6 +114,45 @@ export function bilanCircuits(objets: Objet[]): Circuit[] {
   }
   // Circuits triés par numéro (C2 avant C10), « sans circuit » à la fin.
   return [...parNom.values()].sort((a, b) => (!a.nom ? 1 : !b.nom ? -1 : a.nom.localeCompare(b.nom, 'fr', { numeric: true })));
+}
+
+// ---------- Réseaux : tronçons d'un même type reliés entre eux ----------
+export type Reseau = { type: string; liaisons: number[]; longueur: number; circuits: string[] };
+
+/**
+ * Regroupe les câbles et tuyaux d'un même type qui se touchent : extrémités sur le même équipement,
+ * ou extrémité posée sur un autre tronçon (à `tolerance` près, en pixels du plan : piquage, dérivation).
+ * Longueur totale en pixels du plan ; circuits : repères portés par les tronçons et les équipements reliés.
+ */
+export function reseaux(liaisons: Liaison[], objets: Objet[], tolerance: number): Reseau[] {
+  const ls = liaisons.filter((l) => { const t = LIAISONS[l.type]; return !t.epaisseur && !t.cote && !t.horsLegende; });
+  const parent = ls.map((_, i) => i);
+  const racine = (i: number): number => (parent[i] === i ? i : (parent[i] = racine(parent[i])));
+  const bouts = (l: Liaison): Point[] => [{ x: l.points[0], y: l.points[1] }, { x: l.points[l.points.length - 2], y: l.points[l.points.length - 1] }];
+  const equipements = (l: Liaison) => [l.debut, l.fin].filter((id) => id !== undefined);
+  for (let i = 0; i < ls.length; i++)
+    for (let j = i + 1; j < ls.length; j++) {
+      const [a, b] = [ls[i], ls[j]];
+      if (a.type !== b.type) continue;
+      const touche =
+        equipements(a).some((id) => equipements(b).includes(id)) ||
+        bouts(a).some((p) => aimanter(p, [b.points], tolerance)) ||
+        bouts(b).some((p) => aimanter(p, [a.points], tolerance));
+      if (touche) parent[racine(i)] = racine(j);
+    }
+  const groupes = new Map<number, Liaison[]>();
+  ls.forEach((l, i) => groupes.set(racine(i), [...(groupes.get(racine(i)) ?? []), l]));
+  return [...groupes.values()]
+    .map((g) => {
+      const reperes = [...g.map((l) => l.props.repere), ...g.flatMap(equipements).map((id) => objets.find((o) => o.id === id)?.props.repere)];
+      return {
+        type: g[0].type,
+        liaisons: g.map((l) => l.id),
+        longueur: g.reduce((s, l) => s + longueur(l.points), 0),
+        circuits: [...new Set(reperes.filter((r): r is string => !!r?.trim()).map((r) => r.trim()))],
+      };
+    })
+    .sort((a, b) => a.type.localeCompare(b.type) || b.longueur - a.longueur);
 }
 
 export function nomenclature(etages: Etage[]): string {
@@ -170,6 +213,8 @@ function lireEtage(d: any, nomParDefaut: string): Etage {
   const pieces = (Array.isArray(d.pieces) ? d.pieces : []).filter((p: any) => p && fini(p.x) && fini(p.y) && Object.hasOwn(TYPES_PIECES, p.type));
   return {
     ...(pieces.length && { pieces: pieces.map((p: any) => ({ x: p.x, y: p.y, type: p.type })) }),
+    ...(fini(d.hsp) && d.hsp >= 1.8 && d.hsp <= 6 && { hsp: d.hsp }),
+    ...(['bonne', 'moyenne', 'faible'].includes(d.isolation) && { isolation: d.isolation }),
     nom: typeof d.nom === 'string' && d.nom.trim() ? d.nom.trim().slice(0, 60) : nomParDefaut,
     echelle: fini(d.echelle) && d.echelle > 0 ? d.echelle : null,
     taille: fini(d.taille) && d.taille > 0 ? d.taille : 1.5,
