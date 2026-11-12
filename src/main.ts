@@ -6,6 +6,7 @@ import { blanchir, masqueMurs, ouvertures, rectangles } from './detection.ts';
 import { echelleDepuisCotes, effacerCotes } from './cotes.ts';
 import { pieces as trouverPieces } from './pieces.ts';
 import { pdfDepuisJpeg } from './pdf.ts';
+import { router } from './routage.ts';
 import { ISOLATIONS, besoinChauffage, diametreConseille, montee, protection, tableau, volume } from './calculs.ts';
 import { Historique, TYPES_PIECES, aimanter, bilanCircuits, manquesPiece, reseaux, type Reseau, echelleDepuis, etageVide, lireProjet, longueur, nomenclature, type Etage, type Liaison, type Objet, type Point, type Props } from './etat.ts';
 
@@ -52,6 +53,7 @@ let hist = new Historique(instantane());
 let modifie = false;
 let outil: string | null = null; // clé de SYMBOLES ou de LIAISONS en cours de pose
 let selection: number | null = null; // id de l'objet ou de la liaison sélectionné
+let relierDepuis: { id: number; type: string } | null = null; // tracé automatique en attente du clic sur l'équipement d'arrivée
 let calib: Point[] | null = null; // points cliqués pendant la calibration
 let trace: number[] = []; // points de la liaison en cours de tracé
 let largeurFond = 0;
@@ -482,20 +484,23 @@ function rendreLegende() {
 }
 
 function majStatut() {
-  $('statut').textContent = calib
-    ? `Calibration : cliquez le ${calib.length ? 'second' : 'premier'} point d'une distance connue (Échap pour annuler)`
+  $('statut').textContent = relierDepuis
+    ? `Relier : cliquez l'équipement d'arrivée, le ${LIAISONS[relierDepuis.type].nom.toLowerCase()} sera tracé le long des murs (Échap pour annuler)`
+    : calib
+    ?`Calibration : cliquez le ${calib.length ? 'second' : 'premier'} point d'une distance connue (Échap pour annuler)`
     : estLiaison(outil)
       ? `Tracé : ${LIAISONS[outil].nom} — cliquez les points (Maj = horizontal/vertical) ; un clic sur un équipement s'y accroche et enchaîne vers le suivant ; Entrée ou re-clic pour terminer`
       : outil
         ? `Pose : ${SYMBOLES[outil].nom}${SYMBOLES[outil].libre || SYMBOLES[outil].mural ? '' : ' (se plaque au mur le plus proche)'} — cliquez, puis ✓, clic sur l'aperçu ou Entrée pour valider · R pivote · Échap annule`
         : 'Sélection — glisser pour déplacer, R pour pivoter, Suppr pour effacer, molette pour zoomer';
-  conteneur.style.cursor = calib || outil ? 'crosshair' : 'default';
+  conteneur.style.cursor = calib || outil || relierDepuis ? 'crosshair' : 'default';
   for (const b of $('palette').querySelectorAll('button')) b.classList.toggle('actif', b.dataset.type === outil);
 }
 
 function changerMode(nouvelOutil: string | null, calibration = false) {
   outil = nouvelOutil;
   calib = calibration ? [] : null;
+  relierDepuis = null;
   trace = [];
   rotPose = 0;
   reperes.destroyChildren();
@@ -1059,12 +1064,33 @@ function majPoignees() {
   const l = projet.liaisons.find((l) => l.id === selection);
   if (!l || !groupes[LIAISONS[l.type].calque].listening()) return;
   const r = 6 / stage.scaleX(), n = l.points.length / 2;
+  // Entre deux points, une petite poignée : la tirer insère un point (un coude) à cet endroit.
+  for (let i = 0; i < n - 1; i++) {
+    const [x1, y1, x2, y2] = l.points.slice(2 * i, 2 * i + 4);
+    const m = new Konva.Circle({ name: 'poignee', x: (x1 + x2) / 2, y: (y1 + y2) / 2, radius: r * 0.7, fill: '#2563eb', opacity: 0.45, draggable: true });
+    m.on('mouseenter', () => (conteneur.style.cursor = 'copy'));
+    m.on('mouseleave', majStatut);
+    m.on('dragstart', () => l.points.splice(2 * i + 2, 0, m.x(), m.y()));
+    m.on('dragmove', () => {
+      l.points.splice(2 * i + 2, 2, m.x(), m.y());
+      layer.findOne<Konva.Group>('#' + l.id)?.findOne<Konva.Line>('Line')?.points(l.points.slice());
+    });
+    m.on('dragend', () => (valider(), setTimeout(rendre)));
+    poignees.add(m);
+  }
   for (let i = 0; i < n; i++) {
     const c = new Konva.Circle({ name: 'poignee', x: l.points[2 * i], y: l.points[2 * i + 1], radius: r, fill: '#fff', stroke: '#2563eb', strokeWidth: 2 / stage.scaleX(), draggable: true });
     const extremite = i === 0 || i === n - 1;
     c.on('mouseenter', () => (conteneur.style.cursor = 'move'));
     c.on('mouseleave', majStatut);
-    c.on('dragmove', () => {
+    // Double-clic sur un point intermédiaire : le retire (les extrémités restent).
+    if (!extremite) c.on('dblclick dbltap', () => (l.points.splice(2 * i, 2), valider(), setTimeout(rendre)));
+    c.on('dragmove', (e) => {
+      if (e.evt.shiftKey) {
+        // Maj : aligné horizontalement ou verticalement sur le point voisin.
+        const j = i ? i - 1 : 1, vx = l.points[2 * j], vy = l.points[2 * j + 1];
+        c.position(Math.abs(c.x() - vx) > Math.abs(c.y() - vy) ? { x: c.x(), y: vy } : { x: vx, y: c.y() });
+      }
       const o = extremite ? equipementProche(c.position(), l.type) : null;
       if (o) c.position({ x: o.x, y: o.y });
       l.points.splice(2 * i, 2, c.x(), c.y());
@@ -1126,6 +1152,13 @@ stage.on('click tap', (e) => {
   } else if (outil) {
     if (e.target.findAncestor('.valider', true)) confirmer();
     else proposer(p); // un nouveau clic déplace l'aperçu
+  } else if (relierDepuis) {
+    const g = e.target.findAncestor('.objet', true);
+    const a = projet.objets.find((o) => o.id === relierDepuis!.id), b = g && projet.objets.find((o) => o.id === Number(g.id()));
+    const type = relierDepuis.type;
+    relierDepuis = null;
+    majStatut();
+    if (a && b && a !== b && SYMBOLES[b.type].calque === SYMBOLES[a.type].calque) relier(a, b, type);
   } else if (!e.target.hasName('poignee')) {
     const g = e.target.findAncestor('.objet', true);
     selectionner(g ? Number(g.id()) : null);
@@ -1495,6 +1528,7 @@ function majProps() {
       const total = r.liaisons.reduce((s, id) => s + metresAvecMontees(projet.liaisons.find((l) => l.id === id)!), 0);
       return `<p>Avec montées : ${m2(metresAvecMontees(c))} m</p>` + (r.liaisons.length > 1 ? `<p><strong>Réseau : ${m2(total)} m</strong> (${r.liaisons.length} tronçons, montées comprises)</p>` : '');
     })() +
+    (liaison && !LIAISONS[c.type].cote ? `<p>Double-clic sur le tracé : ajouter un point. Tirer un point avec Maj : l'aligner.</p>` : '') +
     (!liaison && SYMBOLES[c.type].mural ? `<p>R : passer de l'autre côté du mur. M : inverser les gonds.</p>` : '') +
     (!projet.echelle && (liaison ? LIAISONS[c.type].epaisseur : SYMBOLES[c.type].mural) ? `<p>Calibrez l'échelle pour un tracé aux dimensions réelles.</p>` : '') +
     `<label class="fait"><input type="checkbox" data-fait> Fait / posé (touche F)</label>`;
@@ -1509,15 +1543,32 @@ function majProps() {
   };
   actions.append(
     ...(liaison ? [] : [bouton('pivoter', 'Pivoter', 'Pivoter (R)')]),
+    ...(!liaison && SYMBOLES[c.type].mural ? [bouton('miroir', 'Inverser les gonds', 'Inverser les gonds (M)')] : []),
     bouton('dupliquer', 'Dupliquer', 'Dupliquer (Ctrl+D)'),
     bouton('supprimer', 'Supprimer', 'Supprimer (Suppr)', 'danger'),
   );
   el.append(actions);
+  // Tracé automatique depuis un équipement : vers celui qu'on clique, ou directement vers le tableau / la baie.
+  const types = liaison ? [] : typesReliables(SYMBOLES[c.type].calque);
+  if (types.length) {
+    const relie = element('div', '', 'actions');
+    if (types.length > 1) {
+      const choix = element('select');
+      choix.dataset.relierType = '';
+      choix.title = 'Type de tuyau ou de câble à tracer';
+      choix.append(...types.map((t) => Object.assign(element('option', LIAISONS[t].nom), { value: t })));
+      relie.append(choix);
+    }
+    relie.append(bouton('relier', 'Relier à…', "Tracer automatiquement, le long des murs, jusqu'à l'équipement cliqué ensuite"));
+    const pole = poleDe(c as Objet);
+    if (pole) relie.append(bouton('relier-pole', `Relier ${pole.type === 'tableau' ? 'au tableau' : 'à la baie'}`, 'Tracer automatiquement, le long des murs'));
+    el.append(relie);
+  }
 }
 $('props').addEventListener('input', (e) => {
   const i = e.target as HTMLInputElement;
   const c = cible();
-  if (!c) return;
+  if (!c || (!i.dataset.champ && i.type !== 'checkbox')) return; // la liste « type à tracer » n'est pas une propriété
   if (i.type === 'checkbox') basculerFait(c, i.checked);
   else if (i.value.trim()) c.props[i.dataset.champ!] = i.value.trim();
   else delete c.props[i.dataset.champ!];
@@ -1637,7 +1688,64 @@ $('props').addEventListener('click', (e) => {
   if (action === 'supprimer') supprimerSelection();
   else if (action === 'dupliquer' && cible()) coller(cible()!, null);
   else if (action === 'pivoter') pivoterSelection();
+  else if (action === 'miroir') inverserGonds();
+  else if (action === 'relier' || action === 'relier-pole') {
+    const a = projet.objets.find((o) => o.id === selection);
+    if (!a) return;
+    const type = $('props').querySelector<HTMLSelectElement>('[data-relier-type]')?.value ?? typesReliables(SYMBOLES[a.type].calque)[0];
+    const pole = poleDe(a);
+    if (action === 'relier-pole' && pole) return relier(a, pole, type);
+    changerMode(null);
+    relierDepuis = { id: a.id, type };
+    majStatut();
+  }
 });
+
+// ---------- Tracé automatique ----------
+function typesReliables(calque: string) {
+  return Object.keys(LIAISONS).filter((t) => LIAISONS[t].calque === calque && !LIAISONS[t].cote && !LIAISONS[t].epaisseur);
+}
+/** Le tableau (ou la baie) le plus proche de l'équipement, s'il y en a un et que ce n'est pas lui. */
+function poleDe(o: Objet): Objet | undefined {
+  const type = ({ elec: 'tableau', reseau: 'baie' } as Record<string, string>)[SYMBOLES[o.type].calque];
+  return projet.objets
+    .filter((p) => p.type === type && p !== o)
+    .sort((p, q) => Math.hypot(p.x - o.x, p.y - o.y) - Math.hypot(q.x - o.x, q.y - o.y))[0];
+}
+function relier(a: Objet, b: Objet, type: string) {
+  const murs = projet.liaisons.filter((l) => l.type === 'cloison').map((l) => ({ points: l.points, epaisseur: styleLiaison('cloison', l.props).strokeWidth }));
+  const points = router(a, b, murs, projet.echelle ? 0.1 / projet.echelle : 10); // grille de 10 cm
+  const id = nouvelId();
+  projet.liaisons.push({ id, type, points, props: a.props.repere ? { repere: a.props.repere } : {}, debut: a.id, fin: b.id });
+  valider();
+  selectionner(id); // poignées affichées : le tracé se retouche aussitôt
+}
+
+// Double-clic sur le tracé sélectionné : ajoute un point à cet endroit (à retoucher ensuite avec sa poignée).
+conteneur.addEventListener('dblclick', () => {
+  const l = projet.liaisons.find((l) => l.id === selection);
+  const p = layer.getRelativePointerPosition(), ptr = stage.getPointerPosition();
+  if (!l || !p || !ptr || outil || LIAISONS[l.type].cote || stage.getIntersection(ptr)?.hasName('poignee')) return;
+  let meilleur = { d: 12 / stage.scaleX(), s: -1, x: 0, y: 0 };
+  for (let s = 0; s + 3 < l.points.length; s += 2) {
+    const [x1, y1, x2, y2] = l.points.slice(s, s + 4), dx = x2 - x1, dy = y2 - y1;
+    const t = Math.max(0, Math.min(1, ((p.x - x1) * dx + (p.y - y1) * dy) / (dx * dx + dy * dy || 1)));
+    const x = x1 + t * dx, y = y1 + t * dy, d = Math.hypot(p.x - x, p.y - y);
+    if (d < meilleur.d) meilleur = { d, s, x, y };
+  }
+  if (meilleur.s < 0) return;
+  l.points.splice(meilleur.s + 2, 0, meilleur.x, meilleur.y);
+  valider();
+  rendre();
+});
+function inverserGonds() {
+  const o = projet.objets.find((o) => o.id === selection);
+  if (!o || !SYMBOLES[o.type].mural) return;
+  if (o.props.miroir) delete o.props.miroir;
+  else o.props.miroir = '1';
+  valider();
+  rendre();
+}
 
 $('b-sauver').onclick = enregistrer;
 $('b-pdf').onclick = exporterPdf;
@@ -1698,15 +1806,8 @@ addEventListener('keydown', (e) => {
     valider();
     rendre();
     majProps();
-  } else if (k === 'm' && !ctrl) {
-    // Miroir d'une porte ou d'une fenêtre : change le côté des gonds sans changer le côté d'ouverture.
-    const o = projet.objets.find((o) => o.id === selection);
-    if (!o || !SYMBOLES[o.type].mural) return;
-    if (o.props.miroir) delete o.props.miroir;
-    else o.props.miroir = '1';
-    valider();
-    rendre();
-  } else if (k === 'r' && !ctrl && outil && !estLiaison(outil)) {
+  } else if (k === 'm' && !ctrl) inverserGonds(); // côté des gonds, sans changer le côté d'ouverture
+  else if (k === 'r' && !ctrl && outil && !estLiaison(outil)) {
     // Pendant la pose : pivote l'aperçu (et les suivants) de 90° ; porte et fenêtre basculent de l'autre côté du mur.
     const pas = SYMBOLES[outil].mural ? 180 : 90;
     rotPose = (rotPose + pas) % 360;
