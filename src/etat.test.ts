@@ -122,3 +122,12 @@ test('historique : annuler, rétablir, et une nouvelle action efface le futur', 
   assert.equal(h.refaire(), null);
   assert.equal(h.annuler(), 'a');
 });
+
+test('historique : borné, les plus anciennes actions sont oubliées', () => {
+  const h = new Historique('0');
+  for (let i = 1; i <= Historique.MAX + 50; i++) h.commit(String(i));
+  let n = 0, dernier: string | null = null;
+  for (let s = h.annuler(); s !== null; s = h.annuler()) (n++, (dernier = s));
+  assert.equal(n, Historique.MAX);
+  assert.equal(dernier, '50');
+});

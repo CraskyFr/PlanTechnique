@@ -224,7 +224,7 @@ function lireEtage(d: any, nomParDefaut: string): Etage {
   };
 }
 
-// ponytail: pile d'instantanés complets et non bornée ; passer à des diffs si les projets deviennent énormes.
+// ponytail: pile d'instantanés complets, bornée à MAX ; passer à des diffs si les projets deviennent énormes.
 export class Historique {
   private pile: string[];
   private i = 0;
@@ -234,7 +234,9 @@ export class Historique {
   commit(s: string) {
     this.pile.length = ++this.i;
     this.pile.push(s);
+    if (this.pile.length > Historique.MAX + 1) (this.pile.shift(), this.i--); // les plus anciennes actions sont oubliées
   }
+  static MAX = 100; // actions annulables
   annuler(): string | null {
     return this.i > 0 ? this.pile[--this.i] : null;
   }

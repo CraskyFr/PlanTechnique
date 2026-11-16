@@ -80,6 +80,8 @@
       #accueil > * { pointer-events: auto; max-width: 520px; }
       #accueil h1 { margin: 0; font-size: 22px; color: #1f2937; }
       #accueil[hidden] { display: none; }
+      #reprise { position: absolute; z-index: 2; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); }
+      #reprise[hidden] { display: none; }
       main.depot::after { content: 'Déposez le plan (PDF ou image) ou le projet (.json)'; position: absolute; inset: 12px; display: flex; align-items: center; justify-content: center; border: 3px dashed #1d4ed8; border-radius: 12px; background: rgb(239 246 255 / 0.85); color: #1d4ed8; font-size: 18px; font-weight: 600; pointer-events: none; }
       dialog { border: 1px solid #d1d5db; border-radius: 10px; padding: 18px 22px; max-width: 560px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.2); }
       dialog h2 { margin: 0 0 10px; font-size: 18px; }
@@ -178,6 +180,7 @@
     </aside>
     <main>
       <div id="plan"></div>
+      <div id="reprise" role="alert" hidden><span></span><button id="b-reprendre" class="principal">Reprendre</button><button id="b-ignorer">Ignorer</button></div>
       <section id="props" aria-label="Propriétés de l'élément sélectionné" hidden></section>
       <!-- Accueil, tant que l'étage est vide : on peut aussi déposer le fichier n'importe où sur le plan. -->
       <div id="accueil">
@@ -205,6 +208,7 @@
         <dt>Ctrl+Z · Ctrl+Y</dt><dd>Annuler · rétablir</dd>
         <dt>Ctrl+S</dt><dd>Enregistrer le projet</dd>
         <dt>Échap</dt><dd>Annuler l'aperçu, puis quitter l'outil</dd>
+        <dt>Clic droit</dt><dd>Pendant une pose ou un tracé : tout annuler et revenir à la sélection</dd>
       </dl>
       <form method="dialog"><button class="principal">Fermer</button></form>
     </dialog>

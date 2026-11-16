@@ -102,17 +102,23 @@ async function sauvegarde(valeur?: Sauvegarde): Promise<Sauvegarde | undefined> 
   return new Promise((ok, ko) => ((r.onsuccess = () => ok(valeur ? undefined : r.result)), (r.onerror = () => ko(r.error))));
 }
 let minuterie = 0;
+// ponytail: copie complète (fond compris) à chaque fois ; ne sauver que l'étage modifié si ça devient lent.
+const sauvegarderMaintenant = () => (clearTimeout(minuterie), (minuterie = 0), sauvegarde({ texte: JSON.stringify({ etages }), date: Date.now(), enregistre: !modifie }).catch(() => {}));
 function sauvegarderBientot() {
   clearTimeout(minuterie);
-  // ponytail: copie complète (fond compris) à chaque fois ; ne sauver que l'étage modifié si ça devient lent.
-  minuterie = window.setTimeout(() => sauvegarde({ texte: JSON.stringify({ etages }), date: Date.now(), enregistre: !modifie }).catch(() => {}), 1500);
+  minuterie = window.setTimeout(sauvegarderMaintenant, 1500);
 }
+// Onglet masqué ou fermé avant la fin du délai : la sauvegarde en attente part tout de suite.
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden && minuterie) sauvegarderMaintenant();
+});
 
 function appliquer(s: string | null) {
   if (!s) return;
   // Supprimer un étage réinitialise l'historique : les instantanés restent donc alignés sur `etages`.
   (JSON.parse(s) as object[]).forEach((e, i) => etages[i] && Object.assign(etages[i], e));
   modifie = true;
+  sauvegarderBientot();
   rendre();
   majProps();
   majCoords();
@@ -1111,7 +1117,7 @@ function majPoignees() {
 
 stage.on('click tap', (e) => {
   const p = layer.getRelativePointerPosition();
-  if (!p) return;
+  if (!p || (e.evt as MouseEvent).button === 2) return; // clic droit : voir « contextmenu »
   if (calib) {
     calib.push(p);
     reperes.add(new Konva.Circle({ x: p.x, y: p.y, radius: 5 / stage.scaleX(), fill: '#e11d48' }));
@@ -1721,6 +1727,13 @@ function relier(a: Objet, b: Objet, type: string) {
   selectionner(id); // poignées affichées : le tracé se retouche aussitôt
 }
 
+// Clic droit pendant une pose, un tracé, une calibration ou un « Relier à… » : tout annuler, retour à la sélection.
+conteneur.addEventListener('contextmenu', (e) => {
+  if (!outil && !calib && !relierDepuis) return;
+  e.preventDefault();
+  changerMode(null);
+});
+
 // Double-clic sur le tracé sélectionné : ajoute un point à cet endroit (à retoucher ensuite avec sa poignée).
 conteneur.addEventListener('dblclick', () => {
   const l = projet.liaisons.find((l) => l.id === selection);
@@ -1826,14 +1839,25 @@ majCoords();
 majEtages();
 
 // Reprise d'un travail non enregistré (fermeture d'onglet, plantage…).
+// Proposée par un bandeau dans la page : une boîte native serait bloquée par certains navigateurs embarqués.
 sauvegarde()
   .then((s) => {
     if (!s || s.enregistre) return;
     const quand = new Date(s.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
-    if (!confirm(`Un travail non enregistré du ${quand} a été retrouvé. Le reprendre ?`)) return;
-    etages = lireProjet(s.texte);
-    hist = new Historique(instantane());
-    modifie = true;
-    changerEtage(0);
+    const bandeau = $('reprise');
+    bandeau.querySelector('span')!.textContent = `Travail non enregistré du ${quand} retrouvé.`;
+    bandeau.hidden = false;
+    $('b-ignorer').onclick = () => (bandeau.hidden = true);
+    $('b-reprendre').onclick = () => {
+      bandeau.hidden = true;
+      try {
+        etages = lireProjet(s.texte);
+      } catch (err) {
+        return alert((err as Error).message);
+      }
+      hist = new Historique(instantane());
+      modifie = true;
+      changerEtage(0);
+    };
   })
   .catch(() => {}); // stockage indisponible (navigation privée…) : l'appli fonctionne sans
