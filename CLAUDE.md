@@ -28,6 +28,13 @@ npm test       # node --test (Node ≥ 22.18, exécute le TS directement)
 - `src/dialogues.ts` — `annoncer()` (message non bloquant), `demanderTexte()`, `demanderAccord()` : jamais de `alert` / `prompt` / `confirm` natifs.
 - `src/main.ts` — interface et canevas Konva. L'état `projet` est la source de vérité ; `rendre()` reconstruit les nœuds (≈ 40 ms pour 460 éléments : pas de rendu partiel tant que ça suffit). Ce qui reste ici dépend de l'état partagé (`projet`, `selection`, `outil`…) ; le découper davantage demande de regrouper cet état dans un objet. `pdfjs-dist` est chargé à la demande dans `importerFond`.
 
+## Déploiement et sauvegarde en ligne
+
+Projet Vercel `plan-technique` (équipe `salamander2`), relié à GitHub : chaque push sur `main` déploie sur https://plan.paulbodin.fr (DNS chez OVH). Usage personnel.
+
+- `api/plans.ts` — fonction Vercel : liste, suppression et adresses signées (5 min) pour lire ou envoyer `plans/<nom>.json` dans le magasin Blob privé `plan-technique-plans`. Protégée par la variable d'environnement `MOT_DE_PASSE` (saisie par l'utilisateur dans Vercel, jamais dans le dépôt).
+- `src/enLigne.ts` — côté navigateur ; boutons « ☁ Ouvrir » / « ☁ Enregistrer ». En local (`npm run dev`), `/api` n'existe pas : les boutons répondent que la sauvegarde ne fonctionne que sur le site déployé.
+
 Les imports gardent l'extension `.ts` (nécessaire pour que Node lance les tests sans build).
 
 ## Feuille de route
