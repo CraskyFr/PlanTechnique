@@ -32,7 +32,7 @@ npm test       # node --test (Node ≥ 22.18, exécute le TS directement)
 
 Projet Vercel `plan-technique` (équipe `salamander2`), relié à GitHub : chaque push sur `main` déploie sur https://plan.paulbodin.fr (DNS chez OVH). Usage personnel.
 
-- `api/plans.ts` — fonction Vercel : liste, suppression et adresses signées (5 min) pour lire ou envoyer `plans/<nom>.json` dans le magasin Blob privé `plan-technique-plans`. Protégée par la variable d'environnement `MOT_DE_PASSE` (saisie par l'utilisateur dans Vercel, jamais dans le dépôt).
+- `api/plans.ts` — fonction Vercel : liste, suppression et adresses signées (5 min) pour lire ou envoyer `plans/<nom>.json` dans le magasin Blob privé `plan-technique-plans`. Protégée par la variable d'environnement `MOT_DE_PASSE` (saisie par l'utilisateur dans Vercel, jamais dans le dépôt). 5 mots de passe faux depuis une IP la bloquent 15 min (compteurs `securite/<empreinte IP>.json` dans le même magasin) ; le pare-feu Vercel n'est pas accessible avec les droits de ce compte.
 - `src/enLigne.ts` — côté navigateur ; boutons « ☁ Ouvrir » / « ☁ Enregistrer ». En local (`npm run dev`), `/api` n'existe pas : les boutons répondent que la sauvegarde ne fonctionne que sur le site déployé.
 
 Les imports gardent l'extension `.ts` (nécessaire pour que Node lance les tests sans build).
