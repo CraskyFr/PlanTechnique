@@ -625,7 +625,7 @@ function majCircuits() {
 const PAS = 190; // largeur d'une colonne de circuit, en pixels du schéma
 async function schemaUnifilaire() {
   const circuits = bilanCircuits(projet.objets).filter((c) => c.nom);
-  if (!circuits.length) return alert('Aucun circuit : renseignez « Circuit / repère » sur les équipements électriques.');
+  if (!circuits.length) return annoncer('Aucun circuit : renseignez « Circuit / repère » sur les équipements électriques.');
   const diffs = tableau(circuits, surfaceLogement());
   const parNom = new Map(circuits.map((c) => [c.nom, c]));
   const colonnes = diffs.reduce((s, d) => s + Math.max(1, d.circuits.length), 0);
@@ -1169,21 +1169,19 @@ stage.on('click tap', (e) => {
     majStatut();
     if (calib.length < 2) return;
     const [a, b] = calib;
-    // Laisse le second repère s'afficher avant la boîte de dialogue bloquante.
-    setTimeout(() => {
-      const saisie = prompt('Distance réelle entre ces deux points, en mètres ?');
+    demanderTexte('Distance réelle entre ces deux points, en mètres ?').then((saisie) => {
       if (saisie !== null) {
         try {
           projet.echelle = echelleDepuis(a, b, Number(saisie.replace(',', '.')));
           valider();
         } catch (err) {
-          alert((err as Error).message);
+          annoncer((err as Error).message);
         }
       }
       changerMode(null);
       rendre(); // la légende affiche les longueurs dès que l'échelle est connue
       majCoords();
-    }, 50);
+    });
   } else if (estLiaison(outil)) {
     const { q, accroche } = viser(p, e.evt.shiftKey);
     const n = trace.length;
@@ -1303,8 +1301,27 @@ function annoncer(texte: string, annulable = false) {
   $('b-message-annuler').hidden = !annulable;
   m.hidden = false;
   clearTimeout(minuterieMessage);
-  minuterieMessage = window.setTimeout(() => (m.hidden = true), 5000);
+  minuterieMessage = window.setTimeout(() => (m.hidden = true), Math.max(5000, texte.length * 70)); // le temps de lire
 }
+
+// Fenêtre de saisie ou de confirmation dans la page (les boîtes natives sont bloquées par certains navigateurs embarqués).
+const saisie = $<HTMLDialogElement>('saisie');
+$('saisie-annuler').onclick = () => saisie.close('');
+function ouvrirSaisie(texte: string, valeur: string | null, ok = 'OK'): Promise<string | null> {
+  const champ = $<HTMLInputElement>('saisie-champ');
+  $('saisie-texte').textContent = texte;
+  $('saisie-ok').textContent = ok;
+  champ.hidden = valeur === null;
+  champ.value = valeur ?? '';
+  saisie.returnValue = '';
+  saisie.showModal();
+  if (valeur !== null) champ.select();
+  return new Promise((fin) => saisie.addEventListener('close', () => fin(saisie.returnValue === 'ok' ? champ.value : null), { once: true }));
+}
+/** Texte saisi, ou null si la fenêtre est annulée. */
+const demanderTexte = (texte: string, valeur = '') => ouvrirSaisie(texte, valeur);
+/** Vrai si l'action est confirmée. */
+const demanderAccord = async (texte: string, ok: string) => (await ouvrirSaisie(texte, null, ok)) !== null;
 $('b-message-annuler').onclick = () => {
   $('message').hidden = true;
   appliquer(hist.annuler());
@@ -1370,9 +1387,9 @@ function poserFond(dataUrl: string, nouveau = false) {
     stage.position({ x: (stage.width() - img.width * k) / 2, y: (stage.height() - img.height * k) / 2 });
     if (nouveau) projet.echelle = null; // nouvelle image : l'ancienne échelle ne s'applique plus
     rendre();
-    if (nouveau) nettoyerFond(reconnaitrePlan() === true);
+    if (nouveau) reconnaitrePlan().then((cotesLues) => nettoyerFond(cotesLues === true));
   };
-  img.onerror = () => alert("Impossible de lire l'image du plan.");
+  img.onerror = () => annoncer("Impossible de lire l'image du plan.");
   img.src = dataUrl;
   projet.fond = dataUrl;
 }
@@ -1383,7 +1400,7 @@ async function importerFond(f: File) {
       const pdf = await pdfjs.getDocument({ data: await f.arrayBuffer() }).promise;
       let n = 1;
       if (pdf.numPages > 1) {
-        const saisie = prompt(`Ce PDF contient ${pdf.numPages} pages. Laquelle importer ?`, '1');
+        const saisie = await demanderTexte(`Ce PDF contient ${pdf.numPages} pages. Laquelle importer ?`, '1');
         if (saisie === null) return;
         n = Math.min(pdf.numPages, Math.max(1, Math.round(Number(saisie)) || 1));
       }
@@ -1397,12 +1414,12 @@ async function importerFond(f: File) {
     } else {
       const lecteur = new FileReader();
       lecteur.onload = () => poserFond(lecteur.result as string, true);
-      lecteur.onerror = () => alert('Lecture du fichier impossible.');
+      lecteur.onerror = () => annoncer('Lecture du fichier impossible.');
       lecteur.readAsDataURL(f);
     }
     modifie = true;
   } catch (err) {
-    alert(`Import impossible : ${(err as Error).message}`);
+    annoncer(`Import impossible : ${(err as Error).message}`);
   }
 }
 
@@ -1412,16 +1429,16 @@ async function importerFond(f: File) {
 const STRUCTURE_RECONNUE = ['cloison', 'porte', 'fenetre', 'passage'];
 
 function calibrerALaMain(raison: string) {
-  alert(`${raison}\nCliquez maintenant deux points dont vous connaissez la distance réelle pour fixer l'échelle.`);
+  annoncer(`${raison} Cliquez maintenant deux points dont vous connaissez la distance réelle pour fixer l'échelle.`);
   changerMode(null, true);
 }
 
-function reconnaitrePlan() {
+async function reconnaitrePlan() {
   const source = groupes.fond.findOne<Konva.Image>('Image')?.image() as HTMLImageElement | undefined;
   if (!source) return;
   const existante = [...projet.objets, ...projet.liaisons].filter((x) => STRUCTURE_RECONNUE.includes(x.type));
   if (existante.length) {
-    if (!confirm(`Cet étage contient déjà ${existante.length} cloison(s), porte(s) ou fenêtre(s). Les remplacer par celles du nouveau plan ?`))
+    if (!(await demanderAccord(`Cet étage contient déjà ${existante.length} cloison(s), porte(s) ou fenêtre(s). Les remplacer par celles du nouveau plan ?`, 'Remplacer')))
       return calibrerALaMain('Structure existante conservée.');
     projet.objets = projet.objets.filter((o) => !STRUCTURE_RECONNUE.includes(o.type));
     projet.liaisons = projet.liaisons.filter((l) => !STRUCTURE_RECONNUE.includes(l.type));
@@ -1449,7 +1466,7 @@ function reconnaitrePlan() {
     // Plus précis que deux clics : l'échelle est calée sur les faces extérieures des murs détectés.
     const gauche = Math.min(...murs.map((m) => m.x0));
     const droite = Math.max(...murs.map((m) => m.x1));
-    const saisie = prompt("Murs reconnus, mais les cotes du plan n'ont pas pu être lues. Pour fixer l'échelle : largeur hors tout du bâtiment sur le plan (de la face extérieure du mur le plus à gauche à celle du mur le plus à droite), en mètres ?");
+    const saisie = await demanderTexte("Murs reconnus, mais les cotes du plan n'ont pas pu être lues. Pour fixer l'échelle : largeur hors tout du bâtiment sur le plan (de la face extérieure du mur le plus à gauche à celle du mur le plus à droite), en mètres ?");
     try {
       if (saisie === null) throw new Error('Largeur non saisie.');
       projet.echelle = echelleDepuis({ x: gauche, y: 0 }, { x: droite, y: 0 }, Number(saisie.replace(',', '.')));
@@ -1521,11 +1538,11 @@ function enregistrer() {
 }
 
 async function ouvrir(f: File) {
-  if (modifie && !confirm('Les modifications non enregistrées seront perdues. Continuer ?')) return;
+  if (modifie && !(await demanderAccord('Les modifications non enregistrées seront perdues. Continuer ?', 'Continuer'))) return;
   try {
     etages = lireProjet(await f.text());
   } catch (err) {
-    alert((err as Error).message);
+    annoncer((err as Error).message);
     return;
   }
   hist = new Historique(instantane());
@@ -1560,7 +1577,7 @@ function imagePlan(pixelRatio: number) {
   }
   stage.scale(echelle);
   stage.position(pos);
-  if (!canvas) alert('Rien à exporter.');
+  if (!canvas) annoncer('Rien à exporter.');
   return canvas ? { canvas, largeur: r.width, hauteur: r.height } : null;
 }
 
@@ -1569,7 +1586,7 @@ async function exporterPdf() {
   const plan = imagePlan(1.5); // ~300 dpi sur une A4 pour un plan Kazaplan importé
   if (!plan) return;
   const jpeg = await new Promise<Blob | null>((ok) => plan.canvas.toBlob(ok, 'image/jpeg', 0.9));
-  if (!jpeg) return alert("Impossible de générer l'image du plan.");
+  if (!jpeg) return annoncer("Impossible de générer l'image du plan.");
   const pdf = pdfDepuisJpeg(new Uint8Array(await jpeg.arrayBuffer()), plan.canvas.width, plan.canvas.height);
   const url = URL.createObjectURL(new Blob([pdf], { type: 'application/pdf' }));
   telecharger(url, nomFichier('pdf'));
@@ -1593,8 +1610,8 @@ const FORMATS = [
   { page: 'A3 landscape', l: 400, h: 269 },
 ];
 async function imprimer() {
-  if (!projet.echelle) return alert("Calibrez d'abord l'échelle du plan.");
-  const saisie = prompt("Échelle d'impression ? Saisissez 50 pour du 1:50 (1 cm sur le papier = 50 cm réels).", '50');
+  if (!projet.echelle) return annoncer("Calibrez d'abord l'échelle du plan.");
+  const saisie = await demanderTexte("Échelle d'impression ? Saisissez 50 pour du 1:50 (1 cm sur le papier = 50 cm réels).", '50');
   if (saisie === null) return;
   const n = nombre(saisie.replace(/^\s*1\s*[:/]/, ''), 50);
   const plan = imagePlan(2);
@@ -1603,7 +1620,7 @@ async function imprimer() {
   const l = mm(plan.largeur);
   const h = mm(plan.hauteur);
   const format = FORMATS.find((f) => l <= f.l && h <= f.h);
-  if (!format) return alert(`À 1:${n}, le plan mesure ${Math.round(l)} × ${Math.round(h)} mm et dépasse l'A3. Essayez une échelle plus petite, par exemple 1:${n * 2}.`);
+  if (!format) return annoncer(`À 1:${n}, le plan mesure ${Math.round(l)} × ${Math.round(h)} mm et dépasse l'A3. Essayez une échelle plus petite, par exemple 1:${n * 2}.`);
   $('page').textContent = `@page { size: ${format.page}; margin: 10mm; }`;
   const img = $<HTMLImageElement>('impression-img');
   img.src = plan.canvas.toDataURL('image/png');
@@ -1794,7 +1811,7 @@ zonePlan.addEventListener('drop', (e) => {
   if (!f) return;
   if (f.name.toLowerCase().endsWith('.json')) ouvrir(f);
   else if (f.type === 'application/pdf' || f.type.startsWith('image/')) importerFond(f);
-  else alert('Format non reconnu : déposez un PDF, une image ou un projet .json.');
+  else annoncer('Format non reconnu : déposez un PDF, une image ou un projet .json.');
 });
 
 // Recherche dans la palette, sans tenir compte des accents ni des majuscules.
@@ -1927,23 +1944,23 @@ $('b-devis').onclick = exporterDevis;
 $('b-imprimer').onclick = imprimer;
 
 $('etage').onchange = (e) => changerEtage(Number((e.target as HTMLSelectElement).value));
-$('b-etage-plus').onclick = () => {
-  const nom = prompt('Nom du nouvel étage ?', `Niveau ${etages.length + 1}`)?.trim();
+$('b-etage-plus').onclick = async () => {
+  const nom = (await demanderTexte('Nom du nouvel étage ?', `Niveau ${etages.length + 1}`))?.trim();
   if (!nom) return;
   etages.push(etageVide(nom.slice(0, 60)));
   valider();
   changerEtage(etages.length - 1);
 };
-$('b-etage-nom').onclick = () => {
-  const nom = prompt("Nouveau nom de l'étage ?", projet.nom)?.trim();
+$('b-etage-nom').onclick = async () => {
+  const nom = (await demanderTexte("Nouveau nom de l'étage ?", projet.nom))?.trim();
   if (!nom) return;
   projet.nom = nom.slice(0, 60);
   valider();
   majEtages();
 };
-$('b-etage-suppr').onclick = () => {
-  if (etages.length < 2) return alert('Un projet garde au moins un étage.');
-  if (!confirm(`Supprimer l'étage « ${projet.nom} » et tout son contenu ? Cette action ne peut pas être annulée.`)) return;
+$('b-etage-suppr').onclick = async () => {
+  if (etages.length < 2) return annoncer('Un projet garde au moins un étage.');
+  if (!(await demanderAccord(`Supprimer l'étage « ${projet.nom} » et tout son contenu ? Cette action ne peut pas être annulée.`, 'Supprimer'))) return;
   etages = etages.filter((e) => e !== projet);
   hist = new Historique(instantane()); // les anciens instantanés ne correspondent plus aux étages restants
   modifie = true;
@@ -1958,6 +1975,7 @@ addEventListener('keydown', (e) => {
   const ctrl = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
   if (ctrl && k === 's') return void (e.preventDefault(), enregistrer()); // partout, même dans un champ
+  if (document.querySelector('dialog[open]')) return; // fenêtre ouverte : aucun raccourci du plan
   // Dans un champ (texte, nombre, recherche, liste), les touches servent à saisir : R, Suppr, Ctrl+Z natif…
   if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
   if (k === '?') aide.showModal();
@@ -2027,7 +2045,7 @@ sauvegarde()
       try {
         etages = lireProjet(s.texte);
       } catch (err) {
-        return alert((err as Error).message);
+        return annoncer((err as Error).message);
       }
       hist = new Historique(instantane());
       modifie = true;

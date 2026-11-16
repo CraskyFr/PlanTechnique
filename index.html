@@ -82,6 +82,10 @@
       #accueil[hidden] { display: none; }
       #reprise { position: absolute; z-index: 2; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); }
       #reprise[hidden] { display: none; }
+      #saisie { width: min(420px, 90vw); }
+      #saisie p { margin: 0 0 10px; }
+      #saisie .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
+      #saisie-champ[hidden] { display: none; }
       #bulle { position: absolute; z-index: 2; padding: 3px 7px; font-size: 12px; color: #fff; background: rgb(17 24 39 / 0.9); border-radius: 4px; pointer-events: none; white-space: nowrap; }
       #message { position: absolute; z-index: 2; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 13px; color: #fff; background: #1f2937; border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.2); }
       #message[hidden], #message button[hidden] { display: none; }
@@ -198,6 +202,13 @@
         </div>
       </div>
     </main>
+    <dialog id="saisie" aria-labelledby="saisie-texte">
+      <form method="dialog">
+        <p id="saisie-texte"></p>
+        <input id="saisie-champ" class="champ" type="text" autocomplete="off" />
+        <div class="actions"><button type="button" id="saisie-annuler">Annuler</button><button id="saisie-ok" class="principal" value="ok">OK</button></div>
+      </form>
+    </dialog>
     <dialog id="aide" aria-labelledby="aide-titre">
       <h2 id="aide-titre">Raccourcis et gestes</h2>
       <dl>
