@@ -1,25 +1,22 @@
 import Konva from 'konva';
-import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { CALQUES, LIAISONS, SYMBOLES } from './symboles.ts';
 import { blanchir, masqueMurs, ouvertures, rectangles } from './detection.ts';
 import { echelleDepuisCotes, effacerCotes } from './cotes.ts';
-import { pieces as trouverPieces } from './pieces.ts';
+import { calculerCotes, type Analyse, type Salle, type Trait } from './cotesAuto.ts';
 import { pdfDepuisJpeg } from './pdf.ts';
+import { pdfUnifilaire } from './unifilaire.ts';
+import { ecrirePrix, lirePrix, sauvegarde } from './stockage.ts';
+import { annoncer, demanderAccord, demanderTexte } from './dialogues.ts';
 import { router } from './routage.ts';
 import { ISOLATIONS, besoinChauffage, diametreConseille, montee, protection, tableau, volume } from './calculs.ts';
-import { Historique, TYPES_PIECES, aimanter, bilanCircuits, manquesPiece, reseaux, type Reseau, echelleDepuis, etageVide, lireProjet, longueur, nomenclature, type Etage, type Liaison, type Objet, type Point, type Props } from './etat.ts';
+import { nombre, Historique, TYPES_PIECES, aimanter, bilanCircuits, manquesPiece, reseaux, type Reseau, echelleDepuis, etageVide, lireProjet, longueur, nomenclature, type Etage, type Liaison, type Objet, type Point, type Props } from './etat.ts';
 
-pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string) => document.getElementById(id) as T;
 const B = 24; // côté de la boîte d'un symbole
 const couleurs = Object.fromEntries(CALQUES.map((c) => [c.id, c.couleur]));
 const estLiaison = (t: string | null): t is string => !!t && Object.hasOwn(LIAISONS, t);
-const nombre = (s: string | undefined, defaut: number) => {
-  const n = Number(s?.replace(',', '.'));
-  return n > 0 ? n : defaut;
-};
 
 // Champs du panneau Propriétés : [clé, libellé, valeur par défaut].
 function champs(c: Objet | Liaison): string[][] {
@@ -91,19 +88,6 @@ function valider() {
 
 // ---------- Sauvegarde automatique (IndexedDB du navigateur) ----------
 // Une copie du projet est gardée à chaque modification ; au démarrage, un travail non enregistré est proposé à la reprise.
-type Sauvegarde = { texte: string; date: number; enregistre: boolean };
-const ouvrirBase = () =>
-  new Promise<IDBDatabase>((ok, ko) => {
-    const r = indexedDB.open('plan-technique', 1);
-    r.onupgradeneeded = () => r.result.createObjectStore('sauvegarde');
-    r.onsuccess = () => ok(r.result);
-    r.onerror = () => ko(r.error);
-  });
-async function sauvegarde(valeur?: Sauvegarde): Promise<Sauvegarde | undefined> {
-  const table = (await ouvrirBase()).transaction('sauvegarde', valeur ? 'readwrite' : 'readonly').objectStore('sauvegarde');
-  const r = valeur ? table.put(valeur, 'projet') : table.get('projet');
-  return new Promise((ok, ko) => ((r.onsuccess = () => ok(valeur ? undefined : r.result)), (r.onerror = () => ko(r.error))));
-}
 let minuterie = 0;
 // ponytail: copie complète (fond compris) à chaque fois ; ne sauver que l'étage modifié si ça devient lent.
 const sauvegarderMaintenant = () => (clearTimeout(minuterie), (minuterie = 0), sauvegarde({ texte: JSON.stringify({ etages }), date: Date.now(), enregistre: !modifie }).catch(() => {}));
@@ -307,10 +291,6 @@ function rendre() {
 }
 
 // ---------- Cotes automatiques ----------
-type Trait = [number, number, number, number]; // x0, y0, x1, y1 en pixels du plan
-// Pièce détectée : numéro, point d'ancrage dedans (pour son repère « P1 »), surface en m².
-type Salle = { num: number; x: number; y: number; aire: number };
-type Analyse = { traits: Trait[]; salles: Salle[]; numero: (x: number, y: number) => number }; // numero : pièce au point, ≤ 0 hors pièce
 let cotesCache: ({ cle: string } & Analyse) | null = null;
 
 // Pièces, portes, fenêtres et cloisons, toutes dans le calque « Cotes automatiques ».
@@ -322,7 +302,7 @@ function rendreCotesAuto() {
   const ouvertures = projet.objets.filter((o) => SYMBOLES[o.type].mural);
   // Recalcul seulement quand la structure change : poser une prise ne refait pas la détection des pièces.
   const cle = JSON.stringify([e, cloisons, ouvertures]);
-  if (cotesCache?.cle !== cle) cotesCache = { cle, ...calculerCotes(cloisons, ouvertures) };
+  if (cotesCache?.cle !== cle) cotesCache = { cle, ...calculerCotes(cloisons, ouvertures, e) };
   for (const t of cotesCache.traits) dessinerCote(groupes.cotesAuto, t);
   // Repère de chaque pièce (P1, P2…), avec son type s'il est choisi dans le panneau Pièces.
   for (const s of cotesCache.salles) {
@@ -338,145 +318,6 @@ function rendreCotesAuto() {
 }
 
 const typePiece = (s: Salle) => projet.pieces?.find((p) => cotesCache?.numero(p.x, p.y) === s.num)?.type;
-
-function calculerCotes(cloisons: Liaison[], ouvertures: Objet[]): Analyse {
-  const e = projet.echelle!;
-  const traits: Trait[] = [];
-  const salles: Salle[] = [];
-  if (!cloisons.length) return { traits, salles, numero: () => 0 };
-  const epaisseur = (l: Liaison) => nombre(l.props.epaisseur, LIAISONS.cloison.epaisseur!) / 100 / e;
-  const largeur = (o: Objet) => nombre(o.props.largeur, SYMBOLES[o.type].mural!) / 100 / e;
-
-  // Morceaux de cloison : rectangles pour les segments horizontaux ou verticaux, à part pour les obliques.
-  type Rect = { x0: number; y0: number; x1: number; y1: number; horizontal: boolean };
-  const morceaux: Rect[] = [], obliques: number[][] = [];
-  for (const l of cloisons)
-    for (let i = 2; i < l.points.length; i += 2) {
-      const [ax, ay, bx, by] = l.points.slice(i - 2, i + 2), d = epaisseur(l) / 2;
-      if (Math.abs(ay - by) < 0.5) morceaux.push({ x0: Math.min(ax, bx), x1: Math.max(ax, bx), y0: ay - d, y1: ay + d, horizontal: true });
-      else if (Math.abs(ax - bx) < 0.5) morceaux.push({ x0: ax - d, x1: ax + d, y0: Math.min(ay, by), y1: Math.max(ay, by), horizontal: false });
-      else obliques.push([ax, ay, bx, by, d]);
-    }
-
-  // Grille des murs : cloisons à leur épaisseur, ouvertures refermées par un trait fin, sur l'emprise du bâtiment.
-  const xs = cloisons.flatMap((l) => l.points.filter((_, i) => i % 2 === 0));
-  const ys = cloisons.flatMap((l) => l.points.filter((_, i) => i % 2 === 1));
-  const marge = Math.ceil(1 / e);
-  const ox = Math.floor(Math.min(...xs)) - marge, oy = Math.floor(Math.min(...ys)) - marge;
-  const W = Math.ceil(Math.max(...xs)) - ox + marge, H = Math.ceil(Math.max(...ys)) - oy + marge;
-  let murs: Uint8Array = new Uint8Array(0), etiquettes: Int32Array = new Int32Array(0);
-  // ponytail: grille au pixel du plan ; au-delà de 30 Mpx (plan démesuré), pas de pièces, à sous-échantillonner si besoin.
-  if (W * H <= 30e6) {
-    const canvas = document.createElement('canvas');
-    canvas.width = W;
-    canvas.height = H;
-    const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-    ctx.translate(-ox, -oy);
-    ctx.lineCap = 'butt';
-    ctx.lineJoin = 'miter';
-    for (const l of cloisons) {
-      ctx.lineWidth = epaisseur(l);
-      ctx.beginPath();
-      for (let i = 0; i < l.points.length; i += 2) ctx.lineTo(l.points[i], l.points[i + 1]);
-      ctx.stroke();
-    }
-    // Ouvertures bouchées sur toute l'épaisseur du mur voisin : l'embrasure ne rallonge pas la pièce.
-    for (const o of ouvertures) {
-      const L = largeur(o) / 2 + 2, a = (o.rot * Math.PI) / 180;
-      const tableau = (s: number) => morceaux.find((r) => {
-        const x = o.x + s * Math.cos(a) * (L + 2), y = o.y + s * Math.sin(a) * (L + 2);
-        return x >= r.x0 && x <= r.x1 && y >= r.y0 && y <= r.y1;
-      });
-      const mur = tableau(1) ?? tableau(-1);
-      ctx.lineWidth = mur ? Math.min(mur.x1 - mur.x0, mur.y1 - mur.y0) : 3;
-      ctx.beginPath();
-      ctx.moveTo(o.x - Math.cos(a) * L, o.y - Math.sin(a) * L);
-      ctx.lineTo(o.x + Math.cos(a) * L, o.y + Math.sin(a) * L);
-      ctx.stroke();
-    }
-    // Ouverture sans élément posé (passage non reconnu, porte pas encore placée) : on la referme pour séparer
-    // les pièces. Depuis chaque bout de cloison, on regarde le premier morceau rencontré dans le prolongement :
-    // - même épaisseur, dans l'alignement, de 40 cm à 2,5 m : ouverture dans une cloison ;
-    // - mur épais (≥ 15 cm) qui bute sur un autre mur qui le barre entièrement : ouverture dans un angle.
-    // Une cloison fine qui s'arrête face à un mur (meuble, retour de douche) n'est pas refermée, ni un bloc
-    // presque carré (jonction de murs reconnue à part), qui n'indique aucune direction.
-    const repere = (r: Rect, horizontal: boolean) => (horizontal ? [r.x0, r.x1, r.y0, r.y1] : [r.y0, r.y1, r.x0, r.x1]);
-    for (const A of morceaux) {
-      const [a0A, a1A, b0A, b1A] = repere(A, A.horizontal), ep = b1A - b0A, tol = Math.max(3, 0.35 * ep);
-      if (a1A - a0A < 2 * ep) continue;
-      for (const sens of [1, -1]) {
-        let plusProche: { C: Rect; vide: number } | null = null;
-        for (const C of morceaux) {
-          if (C === A) continue;
-          const [a0C, a1C, b0C, b1C] = repere(C, A.horizontal);
-          if (b0C >= b1A || b1C <= b0A) continue; // hors du prolongement
-          const vide = sens > 0 ? a0C - a1A : a0A - a1C;
-          if (vide >= -1 && (!plusProche || vide < plusProche.vide)) plusProche = { C, vide };
-        }
-        if (!plusProche || plusProche.vide * e < 0.4 || plusProche.vide * e > 2.5) continue;
-        const [, , b0C, b1C] = repere(plusProche.C, A.horizontal);
-        const aligne = plusProche.C.horizontal === A.horizontal && Math.abs(b0C - b0A) <= tol && Math.abs(b1C - b1A) <= tol;
-        const barre = ep * e >= 0.15 && b0C <= b0A + tol && b1C >= b1A - tol;
-        if (!aligne && !barre) continue;
-        const debut = sens > 0 ? a1A - 2 : a0A + 2 - plusProche.vide - 4;
-        if (A.horizontal) ctx.fillRect(debut, b0A, plusProche.vide + 4, ep);
-        else ctx.fillRect(b0A, debut, ep, plusProche.vide + 4);
-      }
-    }
-    const alpha = ctx.getImageData(0, 0, W, H).data;
-    murs = new Uint8Array(W * H);
-    for (let p = 0; p < W * H; p++) murs[p] = +(alpha[p * 4 + 3] > 127);
-    // Pièces d'au moins 0,5 m² ; rayon de 3 px : les murs reconnus sont des tranches séparées de quelques pixels.
-    const resultat = trouverPieces(murs, W, H, Math.round(0.5 / e / e), 3);
-    etiquettes = resultat.etiquettes;
-    resultat.pieces.forEach(({ aire, largeur: l }, i) => salles.push({ num: i + 1, x: ox + (l.b0 + l.b1) / 2, y: oy + l.a + 0.5, aire: aire * e * e }));
-    for (const { largeur: l, hauteur: h } of resultat.pieces) {
-      traits.push([ox + l.b0, oy + l.a + 0.5, ox + l.b1, oy + l.a + 0.5]);
-      traits.push([ox + h.a + 0.5, oy + h.b0, ox + h.a + 0.5, oy + h.b1]);
-    }
-  }
-  const lire = (tab: Uint8Array | Int32Array, x: number, y: number) => {
-    const u = Math.round(x - ox), v = Math.round(y - oy);
-    return u < 0 || v < 0 || u >= W || v >= H || !tab.length ? -1 : tab[v * W + u];
-  };
-  // Cote parallèle à un élément de mur (centre c, direction u, longueur L), décalée vers l'intérieur d'une pièce.
-  const aCote = (cx: number, cy: number, ux: number, uy: number, L: number, demi: number): Trait => {
-    const d = demi + 0.2 / e;
-    const s = lire(etiquettes, cx - uy * d, cy + ux * d) > 0 ? 1 : lire(etiquettes, cx + uy * d, cy - ux * d) > 0 ? -1 : 1;
-    const px = cx - uy * d * s, py = cy + ux * d * s;
-    return [px - (ux * L) / 2, py - (uy * L) / 2, px + (ux * L) / 2, py + (uy * L) / 2];
-  };
-
-  for (const o of ouvertures) {
-    const a = (o.rot * Math.PI) / 180, ux = Math.cos(a), uy = Math.sin(a), L = largeur(o);
-    // Demi-épaisseur du mur : on la mesure dans le tableau (le mur juste à côté de l'ouverture).
-    const jx = o.x + ux * (L / 2 + 2), jy = o.y + uy * (L / 2 + 2);
-    let demi = 0;
-    while (demi < 1 / e && lire(murs, jx - uy * demi, jy + ux * demi) === 1 && lire(murs, jx + uy * demi, jy - ux * demi) === 1) demi++;
-    traits.push(aCote(o.x, o.y, ux, uy, L, demi));
-  }
-
-  for (const [ax, ay, bx, by, d] of obliques) {
-    const L = Math.hypot(bx - ax, by - ay);
-    if (L * e >= 0.3) traits.push(aCote((ax + bx) / 2, (ay + by) / 2, (bx - ax) / L, (by - ay) / L, L, d));
-  }
-  // Cloisons : les morceaux alignés qui se touchent (mur reconnu en plusieurs tranches) forment une seule cloison.
-  const rects = morceaux.map((r) => ({ ...r }));
-  const touche = (r: Rect, s: Rect) => r.horizontal === s.horizontal && r.x0 <= s.x1 + 3 && s.x0 <= r.x1 + 3 && r.y0 <= s.y1 + 3 && s.y0 <= r.y1 + 3;
-  // ponytail: fusion en O(n³) au pire, instantanée pour quelques centaines de cloisons.
-  for (let i = 0; i < rects.length; i++)
-    for (let j = i + 1; j < rects.length; j++)
-      if (touche(rects[i], rects[j])) {
-        const [r, s] = [rects[i], rects.splice(j, 1)[0]];
-        Object.assign(r, { x0: Math.min(r.x0, s.x0), y0: Math.min(r.y0, s.y0), x1: Math.max(r.x1, s.x1), y1: Math.max(r.y1, s.y1) });
-        j = i; // le rectangle agrandi peut maintenant en toucher d'autres
-      }
-  for (const r of rects) {
-    const L = r.horizontal ? r.x1 - r.x0 : r.y1 - r.y0, demi = (r.horizontal ? r.y1 - r.y0 : r.x1 - r.x0) / 2;
-    if (L * e >= 0.3) traits.push(aCote((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, +r.horizontal, +!r.horizontal, L, demi));
-  }
-  return { traits, salles, numero: (x, y) => lire(etiquettes, x, y) };
-}
 
 // Cote façon Kazaplan : trait violet fin, taquets aux deux bouts, valeur en centimètres au milieu sur fond blanc.
 function dessinerCote(g: Konva.Group, [x0, y0, x1, y1]: Trait) {
@@ -622,78 +463,12 @@ function majCircuits() {
 }
 
 // Schéma unifilaire du tableau proposé, en PDF A4 (dessiné sur un canevas, puis embarqué en JPEG).
-const PAS = 190; // largeur d'une colonne de circuit, en pixels du schéma
 async function schemaUnifilaire() {
   const circuits = bilanCircuits(projet.objets).filter((c) => c.nom);
   if (!circuits.length) return annoncer('Aucun circuit : renseignez « Circuit / repère » sur les équipements électriques.');
-  const diffs = tableau(circuits, surfaceLogement());
-  const parNom = new Map(circuits.map((c) => [c.nom, c]));
-  const colonnes = diffs.reduce((s, d) => s + Math.max(1, d.circuits.length), 0);
-  const L = Math.max(2000, 260 + colonnes * PAS), H = Math.round(L / 1.414);
-  const c = document.createElement('canvas');
-  c.width = L;
-  c.height = H;
-  const g = c.getContext('2d')!;
-  g.fillStyle = '#fff';
-  g.fillRect(0, 0, L, H);
-  g.strokeStyle = g.fillStyle = '#111827';
-  g.lineWidth = 3;
-  g.font = 'bold 34px system-ui, sans-serif';
-  g.fillText(`Schéma unifilaire proposé — ${projet.nom}`, 60, 70);
-  g.font = '22px system-ui, sans-serif';
-  g.fillText('Règles simplifiées NF C 15-100 : à faire valider par un électricien.', 60, 105);
-  const boite = (x: number, y: number, w: number, h: number, lignes: string[]) => {
-    g.strokeRect(x - w / 2, y, w, h);
-    lignes.forEach((t, i) => g.fillText(t, x - g.measureText(t).width / 2, y + 30 + i * 26));
-  };
-  // Arrivée : disjoncteur de branchement, puis barre de distribution.
-  const yBarre = 330;
-  g.font = 'bold 22px system-ui, sans-serif';
-  boite(130, 150, 180, 70, ['Disjoncteur', 'de branchement']);
-  g.beginPath();
-  g.moveTo(130, 220);
-  g.lineTo(130, yBarre);
-  g.lineTo(L - 60, yBarre);
-  g.stroke();
-  let x = 260;
-  for (const d of diffs) {
-    const n = Math.max(1, d.circuits.length), largeur = n * PAS, cx = x + largeur / 2 - PAS / 2;
-    g.beginPath();
-    g.moveTo(cx, yBarre);
-    g.lineTo(cx, yBarre + 40);
-    g.stroke();
-    g.font = 'bold 20px system-ui, sans-serif';
-    boite(cx, yBarre + 40, Math.min(largeur - 20, 280), 80, [`Différentiel ${d.calibre} A`, `30 mA · type ${d.type}`]);
-    const yBus = yBarre + 160;
-    g.beginPath();
-    g.moveTo(cx, yBarre + 120);
-    g.lineTo(cx, yBus);
-    g.moveTo(x, yBus);
-    g.lineTo(x + (n - 1) * PAS, yBus);
-    g.stroke();
-    d.circuits.forEach((nom, i) => {
-      const cxi = x + i * PAS, circ = parNom.get(nom)!, p = protection(circ);
-      g.beginPath();
-      g.moveTo(cxi, yBus);
-      g.lineTo(cxi, yBus + 40);
-      g.stroke();
-      g.font = 'bold 20px system-ui, sans-serif';
-      boite(cxi, yBus + 40, 120, 60, [`${p.calibre} A`]);
-      g.beginPath();
-      g.moveTo(cxi, yBus + 100);
-      g.lineTo(cxi, yBus + 200);
-      g.stroke();
-      g.font = 'bold 22px system-ui, sans-serif';
-      g.fillText(nom, cxi - g.measureText(nom).width / 2, yBus + 230);
-      g.font = '18px system-ui, sans-serif';
-      const contenu = [circ.prises && `${circ.prises} PC`, circ.eclairage && `${circ.eclairage} éclair.`, circ.dedies && 'spécialisé', circ.autres && `${circ.autres} autres`].filter(Boolean) as string[];
-      [p.section, ...contenu].forEach((t, j) => g.fillText(t, cxi - g.measureText(t).width / 2, yBus + 258 + j * 24));
-    });
-    x += largeur;
-  }
-  const jpeg = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/jpeg', 0.92));
-  if (!jpeg) return;
-  const url = URL.createObjectURL(new Blob([pdfDepuisJpeg(new Uint8Array(await jpeg.arrayBuffer()), L, H)], { type: 'application/pdf' }));
+  const pdf = await pdfUnifilaire(circuits, surfaceLogement(), projet.nom);
+  if (!pdf) return;
+  const url = URL.createObjectURL(pdf);
   telecharger(url, nomFichier('pdf').replace('plan-', 'schema-unifilaire-'));
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -812,21 +587,6 @@ function majReseaux() {
 // ---------- Métré et devis ----------
 // Quantités de tout le projet (équipements à l'unité, câbles et tuyaux au mètre, montées comprises) ;
 // prix unitaires saisis par l'utilisateur, gardés dans ce navigateur.
-const CLE_PRIX = 'plan-technique-prix';
-function lirePrix(): Record<string, number> {
-  try {
-    return JSON.parse(localStorage.getItem(CLE_PRIX) ?? '{}');
-  } catch {
-    return {};
-  }
-}
-function ecrirePrix(prix: Record<string, number>) {
-  try {
-    localStorage.setItem(CLE_PRIX, JSON.stringify(prix));
-  } catch {
-    // stockage indisponible : les prix ne seront pas retrouvés au prochain lancement
-  }
-}
 
 type LigneMetre = { type: string; nom: string; calque: string; quantite: number; unite: 'u' | 'm' };
 function lignesMetre(): LigneMetre[] {
@@ -1293,35 +1053,7 @@ stage.on('mouseout dragstart', () => {
   $('bulle').hidden = true;
 });
 
-// Message bref en bas du plan, avec « Annuler » après une suppression.
-let minuterieMessage = 0;
-function annoncer(texte: string, annulable = false) {
-  const m = $('message');
-  m.querySelector('span')!.textContent = texte;
-  $('b-message-annuler').hidden = !annulable;
-  m.hidden = false;
-  clearTimeout(minuterieMessage);
-  minuterieMessage = window.setTimeout(() => (m.hidden = true), Math.max(5000, texte.length * 70)); // le temps de lire
-}
-
-// Fenêtre de saisie ou de confirmation dans la page (les boîtes natives sont bloquées par certains navigateurs embarqués).
-const saisie = $<HTMLDialogElement>('saisie');
-$('saisie-annuler').onclick = () => saisie.close('');
-function ouvrirSaisie(texte: string, valeur: string | null, ok = 'OK'): Promise<string | null> {
-  const champ = $<HTMLInputElement>('saisie-champ');
-  $('saisie-texte').textContent = texte;
-  $('saisie-ok').textContent = ok;
-  champ.hidden = valeur === null;
-  champ.value = valeur ?? '';
-  saisie.returnValue = '';
-  saisie.showModal();
-  if (valeur !== null) champ.select();
-  return new Promise((fin) => saisie.addEventListener('close', () => fin(saisie.returnValue === 'ok' ? champ.value : null), { once: true }));
-}
-/** Texte saisi, ou null si la fenêtre est annulée. */
-const demanderTexte = (texte: string, valeur = '') => ouvrirSaisie(texte, valeur);
-/** Vrai si l'action est confirmée. */
-const demanderAccord = async (texte: string, ok: string) => (await ouvrirSaisie(texte, null, ok)) !== null;
+// « Annuler » du message affiché après une suppression (voir dialogues.ts).
 $('b-message-annuler').onclick = () => {
   $('message').hidden = true;
   appliquer(hist.annuler());
@@ -1397,6 +1129,8 @@ function poserFond(dataUrl: string, nouveau = false) {
 async function importerFond(f: File) {
   try {
     if (f.type === 'application/pdf') {
+      const pdfjs = await import('pdfjs-dist'); // chargé seulement ici : le lecteur PDF pèse plus que le reste de l'appli
+      pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
       const pdf = await pdfjs.getDocument({ data: await f.arrayBuffer() }).promise;
       let n = 1;
       if (pdf.numPages > 1) {

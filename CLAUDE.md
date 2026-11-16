@@ -22,7 +22,11 @@ npm test       # node --test (Node ≥ 22.18, exécute le TS directement)
 - `src/pieces.ts` — pièces (zones fermées) d'une grille de murs et leurs traversées mur à mur. `main.ts` (`calculerCotes`) rastérise cloisons + ouvertures refermées, puis dessine les cotes automatiques violettes (calque « Cotes automatiques » ; le calque « Cotes manuelles » contient celles tracées à la main), recalculées seulement quand la structure change.
 - `src/calculs.ts` — aides à la conception (pures, testées par `calculs.test.ts`) : protection et section par circuit, répartition sous différentiels (`tableau()`), montées de câbles, puissance de chauffage par pièce, diamètres d'alimentation, volumes de salle de bain. Règles simplifiées, affichées comme telles.
 - `src/routage.ts` — tracé automatique (« Relier à… », « Relier au tableau ») : Dijkstra orthogonal sur une grille de 10 cm, qui longe les cloisons, les perce si la porte est loin et limite les coudes. Testé par `routage.test.ts`.
-- `src/main.ts` — interface et canevas Konva. L'état `projet` est la source de vérité ; `rendre()` reconstruit les nœuds.
+- `src/cotesAuto.ts` — `calculerCotes(cloisons, ouvertures, e)` : pièces et traits de cote à partir de la structure. Sans état, mais utilise un canevas (non testable sous Node).
+- `src/unifilaire.ts` — `pdfUnifilaire()` : schéma unifilaire du tableau proposé, en PDF.
+- `src/stockage.ts` — ce qui reste dans le navigateur : sauvegarde automatique (IndexedDB), prix du devis (localStorage).
+- `src/dialogues.ts` — `annoncer()` (message non bloquant), `demanderTexte()`, `demanderAccord()` : jamais de `alert` / `prompt` / `confirm` natifs.
+- `src/main.ts` — interface et canevas Konva. L'état `projet` est la source de vérité ; `rendre()` reconstruit les nœuds (≈ 40 ms pour 460 éléments : pas de rendu partiel tant que ça suffit). Ce qui reste ici dépend de l'état partagé (`projet`, `selection`, `outil`…) ; le découper davantage demande de regrouper cet état dans un objet. `pdfjs-dist` est chargé à la demande dans `importerFond`.
 
 Les imports gardent l'extension `.ts` (nécessaire pour que Node lance les tests sans build).
 

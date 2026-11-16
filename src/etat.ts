@@ -244,3 +244,9 @@ export class Historique {
     return this.i < this.pile.length - 1 ? this.pile[++this.i] : null;
   }
 }
+
+/** Nombre positif saisi (virgule ou point), ou la valeur par défaut. */
+export const nombre = (s: string | undefined, defaut: number) => {
+  const n = Number(s?.replace(',', '.'));
+  return n > 0 ? n : defaut;
+};
