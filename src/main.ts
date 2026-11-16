@@ -53,6 +53,9 @@ let hist = new Historique(instantane());
 let modifie = false;
 let outil: string | null = null; // clé de SYMBOLES ou de LIAISONS en cours de pose
 let selection: number | null = null; // id de l'objet ou de la liaison sélectionné
+const groupe = new Set<number>(); // sélection multiple (2 éléments ou plus) ; `selection` vaut alors null
+const choisis = () => (groupe.size ? [...groupe] : selection !== null ? [selection] : []);
+const RACCOURCIS: Record<string, string> = { p: 'prise16', i: 'inter', l: 'lumiere', c: 'cable', t: 'tuyauEf' }; // touche → outil
 let relierDepuis: { id: number; type: string } | null = null; // tracé automatique en attente du clic sur l'équipement d'arrivée
 let calib: Point[] | null = null; // points cliqués pendant la calibration
 let trace: number[] = []; // points de la liaison en cours de tracé
@@ -133,6 +136,7 @@ function changerEtage(i: number) {
   projet = etages[i];
   changerMode(null);
   selection = null;
+  groupe.clear();
   groupes.fond.destroyChildren();
   largeurFond = 0;
   if (projet.fond) poserFond(projet.fond);
@@ -160,7 +164,30 @@ const tr = new Konva.Transformer({ resizeEnabled: false, rotationSnaps: [0, 45, 
 const attente = new Konva.Group();
 // Fantôme : le symbole suit la souris avant le clic, déjà plaqué au mur comme il sera posé.
 const fantome = new Konva.Group({ listening: false, opacity: 0.4 });
-layer.add(reperes, fantome, attente, tr);
+const survol = new Konva.Group({ listening: false }); // contour de l'élément survolé, cadre de sélection
+layer.add(reperes, fantome, attente, survol, tr);
+
+// Translation de la sélection : les câbles restent accrochés aux équipements qui bougent avec eux, quittent les autres.
+function deplacer(ids: number[], dx: number, dy: number) {
+  const tenus = new Set(ids);
+  for (const o of projet.objets) if (tenus.has(o.id)) (o.x += dx), (o.y += dy);
+  for (const l of projet.liaisons) {
+    if (!tenus.has(l.id)) continue;
+    l.points = l.points.map((v, i) => v + (i % 2 ? dy : dx));
+    if (l.debut !== undefined && !tenus.has(l.debut)) delete l.debut;
+    if (l.fin !== undefined && !tenus.has(l.fin)) delete l.fin;
+  }
+  for (const o of projet.objets) if (tenus.has(o.id)) suivre(o);
+}
+// Pendant le glisser d'un élément du groupe, les autres suivent à l'écran.
+function glisserGroupe(tenu: number, dx: number, dy: number) {
+  if (!groupe.has(tenu)) return;
+  for (const id of groupe) {
+    if (id === tenu) continue;
+    const o = projet.objets.find((o) => o.id === id);
+    layer.findOne<Konva.Group>('#' + id)?.position(o ? { x: o.x + dx, y: o.y + dy } : { x: dx, y: dy });
+  }
+}
 let majPoigneesAuRendu = () => {}; // branché plus bas, une fois le groupe des poignées créé
 
 new ResizeObserver(() => stage.size({ width: conteneur.clientWidth, height: conteneur.clientHeight })).observe(conteneur);
@@ -209,15 +236,15 @@ function rendre() {
     const t = LIAISONS[l.type];
     const g = new Konva.Group({ name: 'objet', id: String(l.id), draggable: true });
     const style = styleLiaison(l.type, l.props);
-    const trait = { points: l.points, ...style, hitStrokeWidth: Math.max(style.strokeWidth, 12 / stage.scaleX()), shadowColor: '#2563eb', shadowBlur: 5 * k, shadowEnabled: l.id === selection || !!reseauSelectionne?.liaisons.includes(l.id) }; // tout le réseau en surbrillance
+    const trait = { points: l.points, ...style, hitStrokeWidth: Math.max(style.strokeWidth, 12 / stage.scaleX()), shadowColor: '#2563eb', shadowBlur: 5 * k, shadowEnabled: l.id === selection || groupe.has(l.id) || !!reseauSelectionne?.liaisons.includes(l.id) }; // tout le réseau en surbrillance
     g.add(t.cote ? new Konva.Arrow({ ...trait, pointerAtBeginning: true, pointerLength: 3 * k, pointerWidth: 3 * k, fill: t.couleur }) : new Konva.Line(trait));
     const texte = t.cote ? (projet.echelle ? `${metres(longueur(l.points))} m` : 'non calibré') : [l.props.repere, l.props.section].filter(Boolean).join(' · ');
     if (texte) g.add(new Konva.Text({ x: (l.points[0] + l.points[2]) / 2 + 2 * k, y: (l.points[1] + l.points[3]) / 2 + 2 * k, text: texte, fontSize: 5 * k, fontStyle: 'bold', fill: t.couleur }));
     if (l.props.fait) g.add(pastilleFait((l.points[0] + l.points[2]) / 2, (l.points[1] + l.points[3]) / 2, 4 * k));
+    g.on('dragmove', () => glisserGroupe(l.id, g.x(), g.y()));
     g.on('dragend', () => {
-      l.points = l.points.map((v, i) => v + (i % 2 ? g.y() : g.x()));
-      delete l.debut; // déplacé en bloc : le câble quitte ses équipements
-      delete l.fin;
+      // Déplacé seul, le câble quitte ses équipements ; en groupe, il reste accroché à ceux qui bougent avec lui.
+      deplacer(groupe.has(l.id) ? [...groupe] : [l.id], g.x(), g.y());
       valider();
       setTimeout(rendre);
     });
@@ -230,6 +257,7 @@ function rendre() {
     // Pendant le glisser, l'élément se cale en direct comme à la pose : contre le mur, ou dans la cloison
     // pour une porte ou une fenêtre. Ses textes restent à l'horizontale.
     g.on('dragmove', () => {
+      if (groupe.has(o.id)) return glisserGroupe(o.id, g.x() - o.x, g.y() - o.y); // en groupe : translation pure, sans calage
       const t = { ...o, x: g.x(), y: g.y() };
       caler(t);
       g.setAttrs({ x: t.x, y: t.y, rotation: t.rot });
@@ -237,6 +265,11 @@ function rendre() {
       suivre(t); // les câbles accrochés suivent en direct
     });
     g.on('dragend transformend', (ev) => {
+      if (ev.type === 'dragend' && groupe.has(o.id)) {
+        deplacer([...groupe], g.x() - o.x, g.y() - o.y);
+        valider();
+        return void setTimeout(rendre);
+      }
       Object.assign(o, { x: g.x(), y: g.y(), rot: g.rotation() });
       // Une rotation à la poignée est respectée ; seule une porte ou fenêtre se réaligne sur sa cloison.
       if (ev.type === 'dragend') caler(o);
@@ -246,8 +279,11 @@ function rendre() {
       setTimeout(rendre);
     });
     groupes[SYMBOLES[o.type].calque].add(g);
-    if (o.id === selection) tr.nodes([g]);
+    if (o.id === selection || groupe.has(o.id)) tr.nodes([...tr.nodes(), g]);
   }
+  tr.rotateEnabled(!groupe.size); // un groupe se déplace, il ne pivote pas
+  survol.destroyChildren();
+  $('bulle').hidden = true;
 
   rendreCotesAuto();
   rendreLegende();
@@ -987,6 +1023,7 @@ function annulerAttente() {
 
 function selectionner(id: number | null) {
   selection = id;
+  groupe.clear();
   rendre();
   majProps();
 }
@@ -1004,6 +1041,14 @@ function majApercu(q: Point, accroche: Accroche = false) {
   reperes.destroyChildren();
   // Un masque blanc serait invisible pendant le tracé : aperçu en gris.
   if (trace.length) reperes.add(new Konva.Line({ points: [...trace, q.x, q.y], ...styleLiaison(outil!, {}), ...(outil === 'masque' && { stroke: '#9ca3af' }), opacity: 0.6 }));
+  if (trace.length && projet.echelle) {
+    // Longueur du segment en cours (et du tracé entier) à côté du curseur.
+    const segment = metres(longueur([...trace.slice(-2), q.x, q.y])), s = 1 / stage.scaleX();
+    const etiquette = new Konva.Label({ x: q.x + 14 * s, y: q.y + 14 * s, scale: { x: s, y: s } });
+    etiquette.add(new Konva.Tag({ fill: '#111827', opacity: 0.85, cornerRadius: 4 }));
+    etiquette.add(new Konva.Text({ text: trace.length > 2 ? `${segment} m · total ${metres(longueur([...trace, q.x, q.y]))} m` : `${segment} m`, fontSize: 12, padding: 4, fill: '#fff' }));
+    reperes.add(etiquette);
+  }
   // Repère vert : sur un équipement ; bleu : sur un tronçon existant (piquage).
   if (accroche) reperes.add(new Konva.Circle({ x: q.x, y: q.y, radius: 9 / stage.scaleX(), stroke: accroche === 'equipement' ? '#16a34a' : '#2563eb', strokeWidth: 3 / stage.scaleX() }));
 }
@@ -1117,7 +1162,7 @@ function majPoignees() {
 
 stage.on('click tap', (e) => {
   const p = layer.getRelativePointerPosition();
-  if (!p || (e.evt as MouseEvent).button === 2) return; // clic droit : voir « contextmenu »
+  if (!p || cadreFini || (e.evt as MouseEvent).button === 2) return; // clic droit : voir « contextmenu »
   if (calib) {
     calib.push(p);
     reperes.add(new Konva.Circle({ x: p.x, y: p.y, radius: 5 / stage.scaleX(), fill: '#e11d48' }));
@@ -1167,9 +1212,103 @@ stage.on('click tap', (e) => {
     if (a && b && a !== b && SYMBOLES[b.type].calque === SYMBOLES[a.type].calque) relier(a, b, type);
   } else if (!e.target.hasName('poignee')) {
     const g = e.target.findAncestor('.objet', true);
-    selectionner(g ? Number(g.id()) : null);
+    if (g && e.evt.shiftKey) {
+      // Maj+clic : ajoute l'élément à la sélection, ou l'en retire.
+      const ids = new Set(choisis()), id = Number(g.id());
+      if (!ids.delete(id)) ids.add(id);
+      choisir([...ids]);
+    } else selectionner(g ? Number(g.id()) : null);
   }
 });
+
+function choisir(ids: number[]) {
+  if (ids.length < 2) return selectionner(ids[0] ?? null);
+  selection = null;
+  groupe.clear();
+  for (const id of ids) groupe.add(id);
+  rendre();
+  majProps();
+}
+
+// Maj + glisser sur le fond : cadre de sélection (sans Maj, glisser déplace la vue).
+let cadre: { x: number; y: number; rect: Konva.Rect } | null = null;
+let cadreFini = false; // le clic qui suit le relâchement ne doit pas désélectionner
+stage.on('mousedown', (e) => {
+  const p = layer.getRelativePointerPosition();
+  if (!p || !e.evt.shiftKey || e.evt.button !== 0 || outil || calib || relierDepuis || e.target.findAncestor('.objet', true) || e.target.hasName('poignee')) return;
+  const s = 1 / stage.scaleX();
+  cadre = { ...p, rect: new Konva.Rect({ ...p, stroke: '#2563eb', strokeWidth: s, dash: [4 * s, 3 * s], fill: 'rgb(37 99 235 / 0.08)' }) };
+  survol.add(cadre.rect);
+});
+stage.on('mousemove', () => {
+  const p = layer.getRelativePointerPosition();
+  if (cadre && p) cadre.rect.setAttrs({ x: Math.min(p.x, cadre.x), y: Math.min(p.y, cadre.y), width: Math.abs(p.x - cadre.x), height: Math.abs(p.y - cadre.y) });
+});
+stage.on('mouseup', () => {
+  if (!cadre) return;
+  const r = cadre.rect.getAttrs() as { x: number; y: number; width?: number; height?: number };
+  finirCadre();
+  if (((r.width ?? 0) + (r.height ?? 0)) * stage.scaleX() < 6) return; // simple clic
+  const dedans = (x: number, y: number) => x >= r.x && x <= r.x + r.width! && y >= r.y && y <= r.y + r.height!;
+  const libre = (calque: string) => groupes[calque].visible() && groupes[calque].listening(); // ni masqué ni verrouillé
+  choisir([
+    ...projet.objets.filter((o) => libre(SYMBOLES[o.type].calque) && dedans(o.x, o.y)).map((o) => o.id),
+    ...projet.liaisons.filter((l) => libre(LIAISONS[l.type].calque) && l.points.every((v, i) => i % 2 || dedans(v, l.points[i + 1]))).map((l) => l.id),
+  ]);
+  cadreFini = true;
+  setTimeout(() => (cadreFini = false));
+});
+function finirCadre() {
+  cadre?.rect.destroy();
+  cadre = null;
+}
+// Pendant le cadre, la vue ne doit pas glisser avec la souris.
+stage.on('dragstart', (e) => {
+  if (cadre && e.target === stage) stage.stopDrag();
+});
+addEventListener('mouseup', finirCadre); // relâché hors du plan
+
+// Survol : contour et bulle (nom, circuit, hauteur ou longueur) avant même de cliquer.
+stage.on('mouseover', (e) => {
+  const g = e.target.findAncestor('.objet', true) as Konva.Group | null;
+  if (!g || outil || calib || cadre) return;
+  const id = Number(g.id()), o = projet.objets.find((o) => o.id === id), l = projet.liaisons.find((l) => l.id === id);
+  const s = 1 / stage.scaleX(), ptr = stage.getPointerPosition();
+  survol.destroyChildren();
+  if (o) survol.add(new Konva.Rect({ ...g.findOne<Konva.Rect>('Rect')!.getClientRect({ relativeTo: layer }), stroke: '#2563eb', strokeWidth: 1.5 * s, dash: [4 * s, 3 * s], cornerRadius: 2 * s }));
+  else if (l) survol.add(new Konva.Line({ points: l.points, stroke: '#2563eb', strokeWidth: styleLiaison(l.type, l.props).strokeWidth + 6 * s, opacity: 0.25, lineCap: 'round', lineJoin: 'round' }));
+  const x = o ?? l;
+  if (!x || !ptr) return;
+  const bulle = $('bulle');
+  bulle.textContent = [
+    (o ? SYMBOLES : LIAISONS)[x.type].nom,
+    x.props.repere,
+    o ? o.props.hauteur && `h ${o.props.hauteur} cm` : l!.props.section,
+    l && projet.echelle && !LIAISONS[l.type].cote && `${metres(longueur(l.points))} m`,
+  ].filter(Boolean).join(' · ');
+  Object.assign(bulle.style, { left: `${ptr.x + 14}px`, top: `${ptr.y + 16}px` });
+  bulle.hidden = false;
+});
+stage.on('mouseout dragstart', () => {
+  if (cadre) return;
+  survol.destroyChildren();
+  $('bulle').hidden = true;
+});
+
+// Message bref en bas du plan, avec « Annuler » après une suppression.
+let minuterieMessage = 0;
+function annoncer(texte: string, annulable = false) {
+  const m = $('message');
+  m.querySelector('span')!.textContent = texte;
+  $('b-message-annuler').hidden = !annulable;
+  m.hidden = false;
+  clearTimeout(minuterieMessage);
+  minuterieMessage = window.setTimeout(() => (m.hidden = true), 5000);
+}
+$('b-message-annuler').onclick = () => {
+  $('message').hidden = true;
+  appliquer(hist.annuler());
+};
 
 // Cadre tout le contenu (plan, structure, équipements, légende) dans la fenêtre.
 function ajusterVue() {
@@ -1495,7 +1634,7 @@ $('calques').addEventListener('change', (e) => {
 });
 
 const bouton = (type: string, couleur: string, nom: string, dessin: string) =>
-  `<button data-type="${type}" style="color:${couleur}"><svg viewBox="0 0 ${B} ${B}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${dessin}</svg><span>${nom}</span></button>`;
+  `<button data-type="${type}" style="color:${couleur}"><svg viewBox="0 0 ${B} ${B}" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${dessin}</svg><span>${nom}</span>${Object.keys(RACCOURCIS).filter((k) => RACCOURCIS[k] === type).map((k) => `<kbd title="Raccourci clavier">${k.toUpperCase()}</kbd>`).join('')}</button>`;
 // Une section repliable par calque : on ne fait défiler que ce qui sert au corps de métier en cours.
 $('palette').innerHTML = CALQUES.map(
   (c) =>
@@ -1520,6 +1659,15 @@ $('palette').addEventListener('click', (e) => {
 // Panneau Propriétés : reconstruit seulement quand la sélection change, pour ne pas perdre le focus en cours de saisie.
 function majProps() {
   const el = $('props');
+  if (groupe.size) {
+    // Sélection multiple : le circuit se change pour tous, l'ensemble se déplace ou se supprime.
+    el.hidden = false;
+    el.innerHTML = `<strong>${groupe.size} éléments sélectionnés</strong><label>Circuit / repère (pour tous)<input type="text" data-groupe="repere"></label><p>Glisser l'un d'eux ou flèches du clavier : déplacer l'ensemble. Maj+clic : ajouter ou retirer un élément.</p>`;
+    const actions = element('div', '', 'actions'), b = element('button', 'Supprimer', 'danger');
+    b.dataset.action = 'supprimer';
+    actions.append(b);
+    return el.append(actions);
+  }
   const c = cible();
   el.hidden = !c;
   if (!c) return;
@@ -1573,6 +1721,15 @@ function majProps() {
 }
 $('props').addEventListener('input', (e) => {
   const i = e.target as HTMLInputElement;
+  if (groupe.size && i.dataset.groupe) {
+    for (const x of [...projet.objets, ...projet.liaisons]) {
+      if (!groupe.has(x.id)) continue;
+      if (i.value.trim()) x.props.repere = i.value.trim();
+      else delete x.props.repere;
+    }
+    modifie = true;
+    return rendre();
+  }
   const c = cible();
   if (!c || (!i.dataset.champ && i.type !== 'checkbox')) return; // la liste « type à tracer » n'est pas une propriété
   if (i.type === 'checkbox') basculerFait(c, i.checked);
@@ -1671,16 +1828,18 @@ $('b-aide').onclick = () => aide.showModal();
 
 // Actions de l'élément sélectionné, aussi en boutons dans Propriétés (pour qui ne connaît pas les raccourcis).
 function supprimerSelection() {
-  if (!cible()) return;
-  projet.objets = projet.objets.filter((o) => o.id !== selection);
+  const ids = new Set(choisis());
+  if (!ids.size) return;
+  projet.objets = projet.objets.filter((o) => !ids.has(o.id));
   for (const l of projet.liaisons) {
     // Équipement supprimé : ses câbles restent, décrochés.
-    if (l.debut === selection) delete l.debut;
-    if (l.fin === selection) delete l.fin;
+    if (l.debut !== undefined && ids.has(l.debut)) delete l.debut;
+    if (l.fin !== undefined && ids.has(l.fin)) delete l.fin;
   }
-  projet.liaisons = projet.liaisons.filter((l) => l.id !== selection);
+  projet.liaisons = projet.liaisons.filter((l) => !ids.has(l.id));
   valider();
   selectionner(null);
+  annoncer(ids.size > 1 ? `${ids.size} éléments supprimés` : 'Élément supprimé', true);
 }
 function pivoterSelection() {
   const o = projet.objets.find((o) => o.id === selection);
@@ -1794,6 +1953,7 @@ $('b-ajuster').onclick = ajusterVue;
 $('b-annuler').onclick = () => appliquer(hist.annuler());
 $('b-refaire').onclick = () => appliquer(hist.refaire());
 
+let minuterieFleches = 0;
 addEventListener('keydown', (e) => {
   const ctrl = e.ctrlKey || e.metaKey;
   const k = e.key.toLowerCase();
@@ -1813,7 +1973,21 @@ addEventListener('keydown', (e) => {
     selectionner(null);
   } else if (k === 'enter' && enAttente) confirmer();
   else if (k === 'enter' && estLiaison(outil)) terminerTrace();
-  else if ((k === 'delete' || k === 'backspace') && cible()) supprimerSelection();
+  else if (k === 'backspace' && estLiaison(outil) && trace.length) {
+    // Pendant un tracé : retire le dernier point posé, sans tout annuler.
+    trace.splice(-2);
+    majApercu(layer.getRelativePointerPosition() ?? { x: trace.at(-2) ?? 0, y: trace.at(-1) ?? 0 });
+  } else if ((k === 'delete' || k === 'backspace') && choisis().length) supprimerSelection();
+  else if (k.startsWith('arrow') && choisis().length && !outil) {
+    // Flèches : décale la sélection de 1 cm (10 cm avec Maj) ; une seule entrée d'historique par rafale.
+    e.preventDefault();
+    const pas = (projet.echelle ? 0.01 / projet.echelle : 1) * (e.shiftKey ? 10 : 1);
+    deplacer(choisis(), k === 'arrowleft' ? -pas : k === 'arrowright' ? pas : 0, k === 'arrowup' ? -pas : k === 'arrowdown' ? pas : 0);
+    modifie = true;
+    rendre();
+    clearTimeout(minuterieFleches);
+    minuterieFleches = window.setTimeout(valider, 400);
+  } else if (!ctrl && RACCOURCIS[k]) changerMode(RACCOURCIS[k] === outil ? null : RACCOURCIS[k]);
   else if (k === 'f' && !ctrl && cible()) {
     basculerFait(cible()!);
     valider();

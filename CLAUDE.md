@@ -35,4 +35,4 @@ Les imports gardent l'extension `.ts` (nécessaire pour que Node lance les tests
 
 Idées non faites : impression en mosaïque au-delà de l'A3. Export DXF écarté (inutile pour l'utilisateur).
 
-Fait depuis : circuits électriques (`bilanCircuits()` dans `etat.ts`, panneau Circuits, circuit de pose), copier/coller/dupliquer (Ctrl+C/V/D), sauvegarde automatique dans IndexedDB avec reprise au démarrage, vérification par pièce (`manquesPiece()`, type de pièce mémorisé dans `Etage.pieces` par un point), suivi de chantier (`props.fait`, touche F, panneau Avancement).
+Fait depuis : circuits électriques (`bilanCircuits()` dans `etat.ts`, panneau Circuits, circuit de pose), copier/coller/dupliquer (Ctrl+C/V/D), sauvegarde automatique dans IndexedDB avec reprise au démarrage, vérification par pièce (`manquesPiece()`, type de pièce mémorisé dans `Etage.pieces` par un point), suivi de chantier (`props.fait`, touche F, panneau Avancement), sélection multiple (`groupe` dans `main.ts` : Maj+clic, Maj+glisser, `deplacer()`), raccourcis d'outils (`RACCOURCIS`), bulle de survol, message « Supprimé — Annuler » (`annoncer()`), reprise par bandeau.

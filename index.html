@@ -82,6 +82,10 @@
       #accueil[hidden] { display: none; }
       #reprise { position: absolute; z-index: 2; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); }
       #reprise[hidden] { display: none; }
+      #bulle { position: absolute; z-index: 2; padding: 3px 7px; font-size: 12px; color: #fff; background: rgb(17 24 39 / 0.9); border-radius: 4px; pointer-events: none; white-space: nowrap; }
+      #message { position: absolute; z-index: 2; bottom: 14px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 10px; padding: 8px 12px; font-size: 13px; color: #fff; background: #1f2937; border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.2); }
+      #message[hidden], #message button[hidden] { display: none; }
+      #palette kbd { margin-left: auto; padding: 0 5px; font: 11px ui-monospace, monospace; color: #6b7280; border: 1px solid #d1d5db; border-radius: 4px; }
       main.depot::after { content: 'Déposez le plan (PDF ou image) ou le projet (.json)'; position: absolute; inset: 12px; display: flex; align-items: center; justify-content: center; border: 3px dashed #1d4ed8; border-radius: 12px; background: rgb(239 246 255 / 0.85); color: #1d4ed8; font-size: 18px; font-weight: 600; pointer-events: none; }
       dialog { border: 1px solid #d1d5db; border-radius: 10px; padding: 18px 22px; max-width: 560px; box-shadow: 0 10px 30px rgb(0 0 0 / 0.2); }
       dialog h2 { margin: 0 0 10px; font-size: 18px; }
@@ -180,6 +184,8 @@
     </aside>
     <main>
       <div id="plan"></div>
+      <div id="bulle" hidden></div>
+      <div id="message" role="status" hidden><span></span><button id="b-message-annuler">Annuler</button></div>
       <div id="reprise" role="alert" hidden><span></span><button id="b-reprendre" class="principal">Reprendre</button><button id="b-ignorer">Ignorer</button></div>
       <section id="props" aria-label="Propriétés de l'élément sélectionné" hidden></section>
       <!-- Accueil, tant que l'étage est vide : on peut aussi déposer le fichier n'importe où sur le plan. -->
@@ -199,6 +205,10 @@
         <dt>0</dt><dd>Voir tout le plan</dd>
         <dt>Clic, puis ✓ ou Entrée</dt><dd>Poser l'équipement choisi (aperçu plaqué au mur)</dd>
         <dt>Clics successifs, Entrée</dt><dd>Tracer un câble, un tuyau, une cloison ; Maj = horizontal / vertical</dd>
+        <dt>P · I · L · C · T</dt><dd>Outil prise · interrupteur · point lumineux · câble · tuyau d'eau froide</dd>
+        <dt>Retour arrière</dt><dd>Pendant un tracé : retirer le dernier point</dd>
+        <dt>Maj+clic · Maj+glisser sur le fond</dt><dd>Sélectionner plusieurs éléments (un par un · au cadre), pour les déplacer, les supprimer ou changer leur circuit</dd>
+        <dt>Flèches · Maj+flèches</dt><dd>Décaler la sélection de 1 cm · 10 cm</dd>
         <dt>R · M</dt><dd>Pivoter · inverser les gonds d'une porte</dd>
         <dt>Double-clic · tirer ● · double-clic ○</dt><dd>Sur un tracé sélectionné : ajouter un point où l'on veut · ajouter un coude au milieu · retirer un point ; Maj en tirant = aligner</dd>
         <dt>Relier à… · Relier au tableau</dt><dd>Sur un équipement sélectionné : câble ou tuyau tracé automatiquement le long des murs</dd>
