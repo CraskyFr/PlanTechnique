@@ -15,8 +15,9 @@ export function annoncer(texte: string, annulable = false) {
 // Fenêtre de saisie ou de confirmation dans la page (les boîtes natives sont bloquées par certains navigateurs embarqués).
 const saisie = $<HTMLDialogElement>('saisie');
 $('saisie-annuler').onclick = () => saisie.close('');
-function ouvrirSaisie(texte: string, valeur: string | null, ok = 'OK'): Promise<string | null> {
+function ouvrirSaisie(texte: string, valeur: string | null, ok = 'OK', masque = false): Promise<string | null> {
   const champ = $<HTMLInputElement>('saisie-champ');
+  champ.type = masque ? 'password' : 'text';
   $('saisie-texte').textContent = texte;
   $('saisie-ok').textContent = ok;
   champ.hidden = valeur === null;
@@ -26,7 +27,7 @@ function ouvrirSaisie(texte: string, valeur: string | null, ok = 'OK'): Promise<
   if (valeur !== null) champ.select();
   return new Promise((fin) => saisie.addEventListener('close', () => fin(saisie.returnValue === 'ok' ? champ.value : null), { once: true }));
 }
-/** Texte saisi, ou null si la fenêtre est annulée. */
-export const demanderTexte = (texte: string, valeur = '') => ouvrirSaisie(texte, valeur);
+/** Texte saisi, ou null si la fenêtre est annulée ; `masque` cache la saisie (mot de passe). */
+export const demanderTexte = (texte: string, valeur = '', masque = false) => ouvrirSaisie(texte, valeur, 'OK', masque);
 /** Vrai si l'action est confirmée. */
 export const demanderAccord = async (texte: string, ok: string) => (await ouvrirSaisie(texte, null, ok)) !== null;

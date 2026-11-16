@@ -82,6 +82,11 @@
       #accueil[hidden] { display: none; }
       #reprise { position: absolute; z-index: 2; top: 12px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 13px; background: #fffbeb; border: 1px solid #f59e0b; border-radius: 8px; box-shadow: 0 4px 14px rgb(0 0 0 / 0.12); }
       #reprise[hidden] { display: none; }
+      #plans-en-ligne { width: min(480px, 90vw); }
+      #plans-en-ligne ul { margin: 0; padding: 0; list-style: none; max-height: 50vh; overflow: auto; }
+      #plans-en-ligne li { display: flex; gap: 8px; margin: 4px 0; }
+      #plans-en-ligne li button:first-child { flex: 1; text-align: left; }
+      #plans-en-ligne .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
       #saisie { width: min(420px, 90vw); }
       #saisie p { margin: 0 0 10px; }
       #saisie .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
@@ -123,7 +128,9 @@
       <label class="btn principal" title="Image ou PDF : murs, portes, fenêtres et échelle sont reconnus automatiquement">Importer un plan<input id="f-fond" class="vh" type="file" accept="image/*,application/pdf" /></label>
       <div class="groupe" role="group" aria-label="Projet">
         <label class="btn" title="Ouvrir un projet .json">Ouvrir<input id="f-projet" class="vh" type="file" accept=".json,application/json" /></label>
-        <button id="b-sauver" title="Enregistrer le projet (Ctrl+S)">Enregistrer</button>
+        <button id="b-sauver" title="Enregistrer le projet dans un fichier (Ctrl+S)">Enregistrer</button>
+        <button id="b-en-ligne-ouvrir" title="Ouvrir un plan enregistré en ligne (mot de passe demandé la première fois)">☁ Ouvrir</button>
+        <button id="b-en-ligne-sauver" title="Enregistrer le projet en ligne, tous étages compris (mot de passe demandé la première fois)">☁ Enregistrer</button>
       </div>
       <div class="groupe" role="group" aria-label="Sorties">
         <button id="b-pdf" title="PDF A4 de l'étage, calques visibles seulement">PDF</button>
@@ -202,6 +209,11 @@
         </div>
       </div>
     </main>
+    <dialog id="plans-en-ligne" aria-labelledby="titre-en-ligne">
+      <p id="titre-en-ligne"><strong>Plans enregistrés en ligne</strong></p>
+      <ul id="liste-en-ligne"></ul>
+      <div class="actions"><button id="b-en-ligne-fermer">Fermer</button></div>
+    </dialog>
     <dialog id="saisie" aria-labelledby="saisie-texte">
       <form method="dialog">
         <p id="saisie-texte"></p>

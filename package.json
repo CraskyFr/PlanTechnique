@@ -8,10 +8,12 @@
     "test": "node --test src/etat.test.ts src/detection.test.ts src/cotes.test.ts src/pieces.test.ts src/pdf.test.ts src/calculs.test.ts src/routage.test.ts"
   },
   "dependencies": {
+    "@vercel/blob": "^2.9.0",
     "konva": "^10.9.1",
     "pdfjs-dist": "^6.5.438"
   },
   "devDependencies": {
+    "@types/node": "^26.6.6",
     "typescript": "^7.0.2",
     "vite": "^8.3.7"
   }

@@ -8,6 +8,7 @@ import { pdfDepuisJpeg } from './pdf.ts';
 import { pdfUnifilaire } from './unifilaire.ts';
 import { ecrirePrix, lirePrix, sauvegarde } from './stockage.ts';
 import { annoncer, demanderAccord, demanderTexte } from './dialogues.ts';
+import { ErreurEnLigne, enregistrerPlan, lirePlan, listerPlans, motDePasseRetenu, retenirMotDePasse, supprimerPlan } from './enLigne.ts';
 import { router } from './routage.ts';
 import { ISOLATIONS, besoinChauffage, diametreConseille, montee, protection, tableau, volume } from './calculs.ts';
 import { nombre, Historique, TYPES_PIECES, aimanter, bilanCircuits, manquesPiece, reseaux, type Reseau, echelleDepuis, etageVide, lireProjet, longueur, nomenclature, type Etage, type Liaison, type Objet, type Point, type Props } from './etat.ts';
@@ -1271,17 +1272,83 @@ function enregistrer() {
   sauvegarderBientot(); // marquée « enregistrée » : plus de proposition de reprise
 }
 
-async function ouvrir(f: File) {
-  if (modifie && !(await demanderAccord('Les modifications non enregistrées seront perdues. Continuer ?', 'Continuer'))) return;
+/** Remplace le projet par celui de ce texte JSON ; faux si l'utilisateur renonce ou si le texte est invalide. */
+async function charger(texte: string): Promise<boolean> {
+  if (modifie && !(await demanderAccord('Les modifications non enregistrées seront perdues. Continuer ?', 'Continuer'))) return false;
   try {
-    etages = lireProjet(await f.text());
+    etages = lireProjet(texte);
   } catch (err) {
     annoncer((err as Error).message);
-    return;
+    return false;
   }
   hist = new Historique(instantane());
   modifie = false;
   changerEtage(0);
+  return true;
+}
+async function ouvrir(f: File) {
+  if (await charger(await f.text())) nomEnLigne = null; // un fichier local n'est lié à aucun plan en ligne
+}
+
+// ---------- Sauvegarde en ligne (site déployé seulement, voir api/plans.ts) ----------
+let nomEnLigne: string | null = null; // plan en ligne ouvert ou enregistré en dernier : proposé au prochain enregistrement
+
+/** Lance une action en ligne avec le mot de passe : demandé une fois, retenu s'il est accepté, oublié s'il est refusé. */
+async function enLigne<T>(action: (mdp: string) => Promise<T>): Promise<T | undefined> {
+  const mdp = motDePasseRetenu() ?? (await demanderTexte('Mot de passe de la sauvegarde en ligne ?', '', true));
+  if (!mdp) return;
+  try {
+    const resultat = await action(mdp);
+    retenirMotDePasse(mdp);
+    return resultat;
+  } catch (err) {
+    if (err instanceof ErreurEnLigne && err.status === 401) retenirMotDePasse(null);
+    annoncer((err as Error).message);
+  }
+}
+
+async function enregistrerEnLigne() {
+  const nom = (await demanderTexte('Nom du plan en ligne ?', nomEnLigne ?? 'Maison'))?.trim();
+  if (!nom) return;
+  const fait = await enLigne(async (mdp) => {
+    // Un autre plan porte déjà ce nom : on ne l'écrase pas sans accord.
+    if (nom !== nomEnLigne && (await listerPlans(mdp)).some((p) => p.nom === nom) && !(await demanderAccord(`Un plan « ${nom} » existe déjà en ligne. Le remplacer ?`, 'Remplacer'))) return false;
+    await enregistrerPlan(mdp, nom, JSON.stringify({ etages }));
+    return true;
+  });
+  if (!fait) return;
+  nomEnLigne = nom;
+  modifie = false;
+  sauvegarderBientot();
+  annoncer(`Plan « ${nom} » enregistré en ligne.`);
+}
+
+async function ouvrirEnLigne() {
+  const plans = await enLigne(listerPlans);
+  if (!plans) return;
+  const fenetre = $<HTMLDialogElement>('plans-en-ligne');
+  $('liste-en-ligne').replaceChildren(
+    ...(plans.length ? plans : [null]).map((p) => {
+      if (!p) return element('li', 'Aucun plan enregistré en ligne pour le moment.');
+      const li = element('li');
+      const date = new Date(p.date).toLocaleString('fr-FR', { dateStyle: 'short', timeStyle: 'short' });
+      const b = element('button', `${p.nom} — ${date} · ${m2(p.octets / 1e6)} Mo`);
+      b.onclick = async () => {
+        fenetre.close();
+        const texte = await enLigne((mdp) => lirePlan(mdp, p.nom));
+        if (texte !== undefined && (await charger(texte))) nomEnLigne = p.nom;
+      };
+      const suppr = element('button', 'Supprimer', 'danger');
+      suppr.onclick = async () => {
+        fenetre.close();
+        if (!(await demanderAccord(`Supprimer le plan « ${p.nom} » enregistré en ligne ? Cette action ne peut pas être annulée.`, 'Supprimer'))) return;
+        if (await enLigne(async (mdp) => (await supprimerPlan(mdp, p.nom), true))) annoncer(`Plan « ${p.nom} » supprimé en ligne.`);
+      };
+      li.append(b, suppr);
+      return li;
+    }),
+  );
+  fenetre.showModal();
 }
 
 const nomFichier = (extension: string) => `plan-${projet.nom.replace(/[^\p{L}\p{N}]+/gu, '-')}.${extension}`;
@@ -1671,6 +1738,9 @@ function inverserGonds() {
 }
 
 $('b-sauver').onclick = enregistrer;
+$('b-en-ligne-sauver').onclick = enregistrerEnLigne;
+$('b-en-ligne-ouvrir').onclick = ouvrirEnLigne;
+$('b-en-ligne-fermer').onclick = () => $<HTMLDialogElement>('plans-en-ligne').close();
 $('b-pdf').onclick = exporterPdf;
 $('b-csv').onclick = exporterCsv;
 $('b-unifilaire').onclick = schemaUnifilaire;
