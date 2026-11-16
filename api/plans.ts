@@ -3,24 +3,53 @@
 // par cette fonction (limite de 4,5 Mo par requête) : elle délivre une adresse signée, valable 5 minutes,
 // que le navigateur utilise pour envoyer ou lire le fichier directement.
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { del, issueSignedToken, list, presignUrl } from '@vercel/blob';
+import { del, get, issueSignedToken, list, presignUrl, put } from '@vercel/blob';
 
 const DOSSIER = 'plans/';
 const TAILLE_MAX = 100 * 1024 * 1024; // 100 Mo par plan
 const erreur = (status: number, message: string) => Response.json({ erreur: message }, { status });
+const empreinte = (s: string) => createHash('sha256').update(s).digest();
 
-// ponytail: pas de limitation du nombre d'essais ; choisir un mot de passe long, ou ajouter un compteur si le site est attaqué.
-function refus(request: Request): Response | null {
+// Limite d'essais : après ESSAIS mots de passe faux depuis une même adresse IP, elle est bloquée BLOCAGE ms.
+// Les compteurs sont des fichiers securite/<empreinte de l'IP>.json du même magasin (hors du dossier des plans).
+// ponytail: écriture non atomique (deux essais simultanés peuvent compter pour un) et sans effet contre
+// un attaquant aux nombreuses adresses IP ; un mot de passe long reste la vraie protection.
+const ESSAIS = 5, BLOCAGE = 15 * 60 * 1000;
+type Compteur = { echecs: number; depuis: number };
+const fichierCompteur = (request: Request) => {
+  // Vercel remplace ces en-têtes par l'adresse réelle du client : ils ne sont pas falsifiables.
+  const ip = request.headers.get('x-real-ip') ?? request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'inconnue';
+  return `securite/${empreinte(ip).toString('hex').slice(0, 24)}.json`;
+};
+async function lireCompteur(fichier: string): Promise<Compteur | null> {
+  const r = await get(fichier, { access: 'private', useCache: false });
+  if (r?.statusCode !== 200) return null;
+  const c = (await new Response(r.stream).json()) as Compteur;
+  return Date.now() - c.depuis < BLOCAGE ? c : null; // compteur trop ancien : remis à zéro
+}
+
+async function refus(request: Request): Promise<Response | null> {
   const attendu = process.env.MOT_DE_PASSE;
   if (!attendu) return erreur(503, 'Mot de passe non configuré sur le serveur (variable MOT_DE_PASSE dans Vercel).');
+  const fichier = fichierCompteur(request), compteur = await lireCompteur(fichier);
+  if (compteur && compteur.echecs >= ESSAIS) {
+    const minutes = Math.ceil((compteur.depuis + BLOCAGE - Date.now()) / 60000);
+    return erreur(429, `Trop d'essais de mot de passe : réessayez dans ${minutes} min.`);
+  }
   let recu = '';
   try {
     recu = decodeURIComponent(request.headers.get('authorization')?.replace(/^Bearer /, '') ?? '');
   } catch {
     // en-tête mal formé : traité comme un mot de passe faux
   }
-  const empreinte = (s: string) => createHash('sha256').update(s).digest(); // même longueur pour la comparaison
-  return timingSafeEqual(empreinte(recu), empreinte(attendu)) ? null : erreur(401, 'Mot de passe incorrect.');
+  if (timingSafeEqual(empreinte(recu), empreinte(attendu))) {
+    if (compteur) await del(fichier); // bon mot de passe : les fautes de frappe précédentes sont oubliées
+    return null;
+  }
+  const suivant: Compteur = { echecs: (compteur?.echecs ?? 0) + 1, depuis: compteur?.depuis ?? Date.now() };
+  await put(fichier, JSON.stringify(suivant), { access: 'private', allowOverwrite: true, addRandomSuffix: false, contentType: 'application/json' });
+  const restants = ESSAIS - suivant.echecs;
+  return erreur(401, restants > 0 ? `Mot de passe incorrect (encore ${restants} essai${restants > 1 ? 's' : ''}).` : 'Mot de passe incorrect.');
 }
 
 /** Chemin du plan nommé dans l'adresse (?nom=…), ou null si le nom est absent ou invalide. */
@@ -42,9 +71,9 @@ async function adresseSignee(pathname: string, operation: 'get' | 'put'): Promis
 }
 
 async function traiter(request: Request, action: (pathname: string | null) => Promise<Response>): Promise<Response> {
-  const non = refus(request);
-  if (non) return non;
   try {
+    const non = await refus(request);
+    if (non) return non;
     return await action(chemin(request));
   } catch (err) {
     console.error(err);
