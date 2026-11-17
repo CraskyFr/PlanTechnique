@@ -18,8 +18,28 @@ export function dessinerElevation(titre: string, sousTitre: string, longueur: nu
   g.fillStyle = '#fff';
   g.fillRect(0, 0, L, H);
 
-  const x0 = 170, haut = 230, basLibre = 360; // place sous le sol pour les étiquettes
-  const k = Math.min((L - x0 - 90) / longueur, (H - haut - basLibre) / hsp); // pixels par mètre
+  const x0 = 170, haut = 230;
+  // Étiquettes sous le sol, en rangées décalées quand elles se chevauchent. Un mur chargé (plan de travail)
+  // demande plus de rangées : on réduit alors la hauteur du dessin pour qu'elles tiennent au-dessus du pied de page.
+  // Étiquette : « distance · hauteur » en gras, puis le nom et le circuit. La hauteur n'est pas écrite à côté du
+  // symbole : sur un mur chargé, le symbole voisin la cacherait.
+  const lignesDe = (el: ElementDessin) => [`${virgule(el.abscisse)} m · h ${el.hauteur === null ? '?' : Math.round(el.hauteur * 100)}`, el.nom, ...(el.repere ? [el.repere] : [])];
+  const largeurs = elements.map((el) =>
+    Math.max(...lignesDe(el).map((t, i) => ((g.font = i === 0 ? 'bold 22px system-ui, sans-serif' : '19px system-ui, sans-serif'), g.measureText(t).width))) + 16,
+  );
+  let k = 0, rangs: number[] = [];
+  for (let n = 3; n <= 10; n++) {
+    k = Math.min((L - x0 - 90) / longueur, (H - haut - 130 - 50 - n * 86) / hsp); // pixels par mètre
+    const fins: number[] = [];
+    rangs = elements.map((el, i) => {
+      const x = x0 + el.abscisse * k;
+      let r = 0;
+      while (fins[r] !== undefined && x - largeurs[i] / 2 < fins[r]) r++;
+      fins[r] = x + largeurs[i] / 2;
+      return r;
+    });
+    if (Math.max(-1, ...rangs) < n) break;
+  }
   const sol = haut + hsp * k, X = (m: number) => x0 + m * k, Y = (m: number) => sol - m * k;
 
   g.fillStyle = '#111827';
@@ -77,8 +97,8 @@ export function dessinerElevation(titre: string, sousTitre: string, longueur: nu
   }
 
   // Équipements : symbole à sa hauteur, trait de rappel jusqu'au sol, étiquettes sous le sol en rangées décalées.
-  const taille = 56, rangees: number[] = [];
-  for (const el of elements) {
+  const taille = 56;
+  for (const [i, el] of elements.entries()) {
     const inconnue = el.hauteur === null, h = inconnue ? Math.min(1, hsp / 2) : el.hauteur!;
     const [x, y] = [X(el.abscisse), Y(Math.min(h, hsp))];
     g.strokeStyle = '#9ca3af';
@@ -105,18 +125,9 @@ export function dessinerElevation(titre: string, sousTitre: string, longueur: nu
       g.fillText(el.texte, 12 - g.measureText(el.texte).width / 2, 14.5);
     }
     g.restore();
-    // Hauteur à côté du symbole.
-    g.font = 'bold 22px system-ui, sans-serif';
-    g.fillStyle = inconnue ? '#ea580c' : '#111827';
-    g.fillText(inconnue ? 'h ?' : `h ${Math.round(h * 100)}`, x + taille / 2 + 6, y + 8);
 
-    const lignes = [`${virgule(el.abscisse)} m`, el.nom, ...(el.repere ? [el.repere] : [])];
-    g.font = '20px system-ui, sans-serif';
-    const largeur = Math.max(...lignes.map((t) => g.measureText(t).width)) + 16;
-    let r = 0;
-    while (rangees[r] !== undefined && x - largeur / 2 < rangees[r]) r++;
-    rangees[r] = x + largeur / 2;
-    const yt = sol + 50 + r * 86;
+    const lignes = lignesDe(el);
+    const r = rangs[i], yt = sol + 50 + r * 86;
     if (r) {
       g.strokeStyle = '#d1d5db';
       g.beginPath();
@@ -126,7 +137,7 @@ export function dessinerElevation(titre: string, sousTitre: string, longueur: nu
     }
     lignes.forEach((t, i) => {
       g.font = i === 0 ? 'bold 22px system-ui, sans-serif' : '19px system-ui, sans-serif';
-      g.fillStyle = i === 0 ? '#111827' : el.couleur;
+      g.fillStyle = i === 0 ? (inconnue ? '#ea580c' : '#111827') : el.couleur;
       g.fillText(t, x - g.measureText(t).width / 2, yt + i * 24);
     });
   }

@@ -16,14 +16,15 @@ const segments = [
   { x1: 200, y1: 5, x2: 200, y2: 300, demi: 5 },
 ];
 const fenetre = { id: 9, x: 200, y: 0, rot: 0, largeur: 100 };
+// rot comme à la pose : 0 pour un symbole sous le mur (sur le plan), 180 au-dessus.
 const equipements = [
-  { id: 1, x: 100, y: 20 }, // pièce 1
-  { id: 2, x: 300, y: 20 }, // pièce 2
-  { id: 3, x: 100, y: -20 }, // pièce 3, côté gauche du plan
-  { id: 4, x: 300, y: -20 }, // pièce 3, côté droit du plan
-  { id: 5, x: 170, y: 20 }, // pièce 1, sous la fenêtre (prise sous allège)
+  { id: 1, x: 100, y: 20, rot: 0 }, // pièce 1
+  { id: 2, x: 300, y: 20, rot: 0 }, // pièce 2
+  { id: 3, x: 100, y: -20, rot: 180 }, // pièce 3, côté gauche du plan
+  { id: 4, x: 300, y: -20, rot: 180 }, // pièce 3, côté droit du plan
+  { id: 5, x: 170, y: 20, rot: 0 }, // pièce 1, sous la fenêtre (prise sous allège)
 ];
-const faces = elevations(segments, [fenetre], equipements, numero, 0.01, 30);
+const faces = elevations(segments, [fenetre], equipements, numero, 0.01, 10);
 const face = (piece: number) => faces.find((f) => f.piece === piece && f.vue === (piece === 3 ? 'bas' : 'haut'))!;
 const proche = (a: number, b: number) => assert.ok(Math.abs(a - b) < 0.011, `${a} ≠ ${b}`);
 
@@ -52,10 +53,23 @@ test('élévation : vue depuis l\'autre côté du mur, sans effet miroir', () =>
 test('élévation : un poteau de 30 cm ne coupe pas le mur de la pièce en deux', () => {
   // Mur de 3 m interrompu par un poteau (vide de 30 cm, occupé par des tranches perpendiculaires) ; pièce 1 dessous.
   const num = (x: number, y: number) => (y > 8 && x >= 0 && x <= 300 ? (x > 120 - 3 && x < 150 + 3 && y < 40 ? 0 : 1) : -1);
-  const f = elevations([{ x1: 0, y1: 0, x2: 120, y2: 0, demi: 5 }, { x1: 150, y1: 0, x2: 300, y2: 0, demi: 5 }], [], [{ id: 1, x: 250, y: 20 }], num, 0.01, 30);
+  const f = elevations([{ x1: 0, y1: 0, x2: 120, y2: 0, demi: 5 }, { x1: 150, y1: 0, x2: 300, y2: 0, demi: 5 }], [], [{ id: 1, x: 250, y: 20, rot: 0 }], num, 0.01, 10);
   assert.equal(f.length, 1);
   proche(f[0].longueur, 3);
   proche(f[0].elements[0].abscisse, 2.5);
+});
+
+test('élévation : près d\'un angle, l\'équipement reste sur le mur contre lequel il est posé', () => {
+  // Angle en haut à gauche de la pièce 1 : mur A horizontal (y = 0), mur B vertical (x = 0), 10 cm d'épaisseur.
+  // Prise posée contre A à 15 cm de la face de B : contact (20, 5), centre une demi-boîte (30 px) plus bas.
+  // Son centre est à 35 px de l'axe de A mais seulement à 20 px de celui de B.
+  const num = (x: number, y: number) => (x > 5 + 3 && y > 5 + 3 && x < 300 && y < 300 ? 1 : x < 0 || y < 0 ? -1 : 0);
+  const murs = [{ x1: 0, y1: 0, x2: 300, y2: 0, demi: 5 }, { x1: 0, y1: 0, x2: 0, y2: 300, demi: 5 }];
+  const f = elevations(murs, [], [{ id: 1, x: 20, y: 35, rot: 0 }], num, 0.01, 30);
+  const avec = f.filter((x) => x.elements.length);
+  assert.equal(avec.length, 1);
+  assert.equal(avec[0].vue, 'haut'); // mur A
+  proche(avec[0].elements[0].abscisse, 0.15);
 });
 
 test('élévation : la cloison a deux faces, gauche et droite, avec les angles de chaque pièce', () => {

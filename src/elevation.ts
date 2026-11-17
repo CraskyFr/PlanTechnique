@@ -5,7 +5,7 @@
 
 export type Segment = { x1: number; y1: number; x2: number; y2: number; demi: number }; // cloison, en pixels du plan
 export type Ouverture = { id: number; x: number; y: number; rot: number; largeur: number }; // porte, fenêtre, passage (px)
-export type Equipement = { id: number; x: number; y: number };
+export type Equipement = { id: number; x: number; y: number; rot: number }; // rot : celle donnée par la pose contre le mur
 export type Vue = 'haut' | 'bas' | 'gauche' | 'droite'; // position du mur dans la pièce, sur le plan
 export type Face = {
   piece: number;
@@ -19,11 +19,11 @@ const COLINEAIRE = 0.02; // écart d'angle toléré (rad) entre morceaux d'un m�
 const PETIT_VIDE = 0.5; // m : interruption traversée (poteau, retour de mur) sans couper le mur de la pièce
 
 /**
- * Faces de mur de chaque pièce. `e` : mètres par pixel ; `portee` : distance (px) au-delà de la demi-épaisseur
- * jusqu'à laquelle un équipement est considéré posé contre le mur ; `rayon` : épaississement des murs utilisé
+ * Faces de mur de chaque pièce. `e` : mètres par pixel ; `demiBoite` : demi-côté (px) d'un symbole posé, dont le
+ * centre est à cette distance de la face du mur (cf. plaquerAuMur) ; `rayon` : épaississement des murs utilisé
  * pour étiqueter les pièces (les étiquettes s'arrêtent à `rayon` px des faces).
  */
-export function elevations(segments: Segment[], ouvertures: Ouverture[], equipements: Equipement[], numero: (x: number, y: number) => number, e: number, portee: number, rayon = 3): Face[] {
+export function elevations(segments: Segment[], ouvertures: Ouverture[], equipements: Equipement[], numero: (x: number, y: number) => number, e: number, demiBoite: number, rayon = 3): Face[] {
   // Morceaux : cloisons et ouvertures (une ouverture comble le vide entre deux cloisons d'un même mur).
   type Morceau = { ax: number; ay: number; bx: number; by: number; demi: number; ouverture?: Ouverture };
   const morceaux: Morceau[] = segments.filter((s) => Math.hypot(s.x2 - s.x1, s.y2 - s.y1) > 0).map((s) => ({ ax: s.x1, ay: s.y1, bx: s.x2, by: s.y2, demi: s.demi }));
@@ -58,39 +58,24 @@ export function elevations(segments: Segment[], ouvertures: Ouverture[], equipem
   const groupes = new Map<number, Morceau[]>();
   morceaux.forEach((m, i) => groupes.set(racine(i), [...(groupes.get(racine(i)) ?? []), m]));
 
-  // Équipements : rattachés au morceau le plus proche, s'il est à portée (comme à la pose). Une ouverture compte,
-  // à l'épaisseur de son mur : une prise sous une fenêtre appartient au mur qui porte la fenêtre.
-  const demiMur = new Map<Morceau, number>();
-  for (const groupe of groupes.values()) for (const m of groupe) demiMur.set(m, Math.max(...groupe.map((x) => x.demi)));
-  const rattache = new Map<Morceau, { id: number; t: number; cote: 1 | -1 }[]>();
-  for (const q of equipements) {
-    let meilleur: { m: Morceau; d: number } | null = null;
-    for (const m of morceaux) {
-      const [dx, dy] = [m.bx - m.ax, m.by - m.ay], l2 = dx * dx + dy * dy;
-      const u = Math.max(0, Math.min(1, ((q.x - m.ax) * dx + (q.y - m.ay) * dy) / l2));
-      const d = Math.hypot(q.x - m.ax - u * dx, q.y - m.ay - u * dy);
-      if (d <= demiMur.get(m)! + portee && (!meilleur || d < meilleur.d)) meilleur = { m, d };
-    }
-    if (!meilleur) continue;
-    const m = meilleur.m, [dx, dy] = dir(m);
-    rattache.set(m, [...(rattache.get(m) ?? []), { id: q.id, t: (q.x - m.ax) * dx + (q.y - m.ay) * dy, cote: (q.x - m.ax) * -dy + (q.y - m.ay) * dx >= 0 ? 1 : -1 }]);
-  }
-
-  const faces: Face[] = [];
+  // 1. Faces : pour chaque alignement et chaque côté, les tronçons qui bordent une pièce, d'angle à angle.
+  type Alignement = { ref: Morceau; dx: number; dy: number; demi: number; t: (x: number, y: number) => number };
+  type Brouillon = Face & { al: Alignement; cote: 1 | -1; g: number; h: number; abscisse: (s: number) => number };
+  const alignementDe = new Map<Morceau, Alignement>();
+  const brouillons: Brouillon[] = [];
   for (const groupe of groupes.values()) {
     const ref = groupe.find((m) => !m.ouverture);
     if (!ref) continue; // ouverture isolée, sans cloison
     const [dx, dy] = dir(ref), [px, py] = [-dy, dx]; // direction de l'alignement et normale
     const t = (x: number, y: number) => (x - ref.ax) * dx + (y - ref.ay) * dy;
+    const al: Alignement = { ref, dx, dy, demi: Math.max(...groupe.map((m) => m.demi)), t };
+    for (const m of groupe) alignementDe.set(m, al);
     const debut = Math.min(...groupe.flatMap((m) => [t(m.ax, m.ay), t(m.bx, m.by)]));
     const fin = Math.max(...groupe.flatMap((m) => [t(m.ax, m.ay), t(m.bx, m.by)]));
-    const demi = Math.max(...groupe.map((m) => m.demi));
-    // Équipements de l'alignement, en abscisse de l'alignement (même sens canonique pour tous ses morceaux).
-    const equip = groupe.flatMap((m) => (rattache.get(m) ?? []).map((r) => ({ ...r, t: r.t + t(m.ax, m.ay) })));
 
     for (const cote of [1, -1] as const) {
       // Pièces le long de la face : on lit l'étiquette juste devant le mur, un pixel après l'autre.
-      const recul = demi + rayon + 2, troncons: { k: number; a: number; b: number }[] = [];
+      const recul = al.demi + rayon + 2, troncons: { k: number; a: number; b: number }[] = [];
       for (let s = Math.ceil(debut); s <= fin; s++) {
         const k = numero(ref.ax + dx * s + px * recul * cote, ref.ay + dy * s + py * recul * cote);
         const dernier = troncons.at(-1);
@@ -111,14 +96,12 @@ export function elevations(segments: Segment[], ouvertures: Ouverture[], equipem
         const [g, h] = [Math.max(debut, a - rayon), Math.min(fin, b + 1 + rayon)];
         const abscisse = (s: number) => (cote === 1 ? s - g : h - s) * e; // vu depuis la pièce, sans effet miroir
         const [vx, vy] = [-px * cote, -py * cote]; // direction du regard, de la pièce vers le mur
-        faces.push({
+        brouillons.push({
+          al, cote, g, h, abscisse,
           piece: k,
           vue: Math.abs(vy) > Math.abs(vx) ? (vy < 0 ? 'haut' : 'bas') : vx < 0 ? 'gauche' : 'droite',
           longueur: (h - g) * e,
-          elements: equip
-            .filter((r) => r.cote === cote && r.t >= g - rayon && r.t <= h + rayon)
-            .map((r) => ({ id: r.id, abscisse: Math.max(0, Math.min((h - g) * e, abscisse(r.t))) }))
-            .sort((p, q) => p.abscisse - q.abscisse),
+          elements: [],
           ouvertures: groupe
             .filter((m) => m.ouverture)
             .flatMap((m) => {
@@ -132,5 +115,39 @@ export function elevations(segments: Segment[], ouvertures: Ouverture[], equipem
       }
     }
   }
-  return faces;
+
+  // 2. Équipements. Le centre d'un symbole posé est à une demi-boîte de la face de son mur : près d'un angle, il
+  // peut être plus près de l'axe du mur perpendiculaire. On part donc du point de contact (centre reculé d'une
+  // demi-boîte, dans le sens donné par la rotation de pose) et on préfère un mur parallèle à cette rotation.
+  // À défaut de face de pièce pour ce mur (poteau en tranches, rotation changée à la main), le mur le plus proche.
+  const portee = 3 * demiBoite; // comme plaquerAuMur : au-delà, l'équipement est posé tel quel, loin des murs
+  for (const q of equipements) {
+    const r = (q.rot * Math.PI) / 180, [nx, ny] = [-Math.sin(r), Math.cos(r)]; // du mur vers le symbole
+    const contact = { x: q.x - nx * demiBoite, y: q.y - ny * demiBoite };
+    const candidats: { m: Morceau; ordre: number }[] = [];
+    for (const m of morceaux) {
+      const al = alignementDe.get(m);
+      if (!al) continue;
+      const [dx, dy] = [m.bx - m.ax, m.by - m.ay], l2 = dx * dx + dy * dy;
+      const distance = (p: { x: number; y: number }) => {
+        const u = Math.max(0, Math.min(1, ((p.x - m.ax) * dx + (p.y - m.ay) * dy) / l2));
+        return Math.hypot(p.x - m.ax - u * dx, p.y - m.ay - u * dy);
+      };
+      const d = distance(q);
+      if (d > al.demi + portee) continue;
+      const parallele = Math.abs(al.dx * nx + al.dy * ny) < 0.1; // mur perpendiculaire à la normale de pose
+      // Parallèles d'abord, par distance du point de contact à la face ; puis tous, par distance du centre à l'axe.
+      candidats.push({ m, ordre: parallele ? Math.abs(distance(contact) - al.demi) : 1e6 + d });
+    }
+    candidats.sort((a, b) => a.ordre - b.ordre);
+    for (const { m } of candidats) {
+      const al = alignementDe.get(m)!, t = al.t(q.x, q.y);
+      const cote = (q.x - al.ref.ax) * -al.dy + (q.y - al.ref.ay) * al.dx >= 0 ? 1 : -1;
+      const f = brouillons.find((b) => b.al === al && b.cote === cote && t >= b.g - rayon && t <= b.h + rayon);
+      if (!f) continue;
+      f.elements.push({ id: q.id, abscisse: Math.max(0, Math.min(f.longueur, f.abscisse(t))) });
+      break;
+    }
+  }
+  return brouillons.map(({ piece, vue, longueur, elements, ouvertures: o }) => ({ piece, vue, longueur, elements: elements.sort((a, b) => a.abscisse - b.abscisse), ouvertures: o }));
 }

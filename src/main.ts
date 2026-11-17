@@ -1370,8 +1370,8 @@ function facesDuPlan(): Face[] | null {
     for (let i = 2; i < l.points.length; i += 2) segments.push({ x1: l.points[i - 2], y1: l.points[i - 1], x2: l.points[i], y2: l.points[i + 1], demi });
   }
   const ouvertures = projet.objets.filter((o) => SYMBOLES[o.type].mural).map((o) => ({ id: o.id, x: o.x, y: o.y, rot: o.rot, largeur: nombre(o.props.largeur, SYMBOLES[o.type].mural!) / 100 / e }));
-  // Même portée qu'à la pose (plaquerAuMur) : le centre d'un symbole plaqué est à une demi-boîte de la face du mur.
-  return elevations(segments, ouvertures, projet.objets.filter(contreUnMur), cotesCache.numero, e, 1.5 * B * projet.taille);
+  // Comme à la pose (plaquerAuMur) : le centre d'un symbole plaqué est à une demi-boîte de la face du mur.
+  return elevations(segments, ouvertures, projet.objets.filter(contreUnMur), cotesCache.numero, e, (B * projet.taille) / 2);
 }
 const VUES = { haut: 'mur du haut', bas: 'mur du bas', gauche: 'mur de gauche', droite: 'mur de droite' };
 function dessinFace(f: Face) {
@@ -1406,6 +1406,10 @@ function exporterElevations() {
   const faces = facesDuPlan()?.filter((f) => f.elements.length).sort((a, b) => a.piece - b.piece || a.vue.localeCompare(b.vue));
   if (!faces?.length) return annoncer("Aucun équipement posé contre un mur de pièce : rien à mettre en élévation.");
   pdfFaces(faces, 'elevations-');
+  // Pas d'omission silencieuse : ce qui n'est sur aucune page est signalé (façade extérieure, loin d'une cloison…).
+  const places = new Set(faces.flatMap((f) => f.elements.map((x) => x.id)));
+  const absents = projet.objets.filter((o) => contreUnMur(o) && !places.has(o.id)).length;
+  if (absents) annoncer(`${absents} équipement${absents > 1 ? 's' : ''} hors élévations : contre une façade extérieure, loin d'une cloison, ou dans une pièce non fermée.`);
 }
 function voirElevation(id: number) {
   if (!projet.echelle) return annoncer("Calibrez d'abord l'échelle du plan : les élévations sont cotées en mètres.");
