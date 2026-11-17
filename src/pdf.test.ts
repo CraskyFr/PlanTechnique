@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { pdfDepuisJpeg } from './pdf.ts';
+import { pdfDepuisJpeg, pdfDepuisJpegs } from './pdf.ts';
 
 const jpeg = new Uint8Array([0xff, 0xd8, 1, 2, 3, 0xff, 0xd9]); // contenu factice : seule la structure est vérifiée ici
 
@@ -20,4 +20,11 @@ test('PDF : relu par pdf.js, A4 paysage pour une image large, portrait sinon', a
   const taille = async (l: number, h: number) => (await (await getDocument({ data: pdfDepuisJpeg(jpeg, l, h) }).promise).getPage(1)).view.map(Math.round);
   assert.deepEqual(await taille(300, 200), [0, 0, 842, 595]);
   assert.deepEqual(await taille(200, 300), [0, 0, 595, 842]);
+});
+
+test('PDF : plusieurs pages, chacune orientée selon son image', async () => {
+  const doc = await getDocument({ data: pdfDepuisJpegs([{ jpeg, largeur: 300, hauteur: 200 }, { jpeg, largeur: 200, hauteur: 300 }]) }).promise;
+  assert.equal(doc.numPages, 2);
+  assert.deepEqual((await doc.getPage(1)).view.map(Math.round), [0, 0, 842, 595]);
+  assert.deepEqual((await doc.getPage(2)).view.map(Math.round), [0, 0, 595, 842]);
 });

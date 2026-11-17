@@ -4,7 +4,9 @@ import { CALQUES, LIAISONS, SYMBOLES } from './symboles.ts';
 import { blanchir, masqueMurs, ouvertures, rectangles } from './detection.ts';
 import { echelleDepuisCotes, effacerCotes } from './cotes.ts';
 import { calculerCotes, type Analyse, type Salle, type Trait } from './cotesAuto.ts';
-import { pdfDepuisJpeg } from './pdf.ts';
+import { pdfDepuisJpeg, pdfDepuisJpegs } from './pdf.ts';
+import { elevations, type Face, type Segment } from './elevation.ts';
+import { dessinerElevation } from './dessinElevation.ts';
 import { pdfUnifilaire } from './unifilaire.ts';
 import { ecrirePrix, lirePrix, sauvegarde } from './stockage.ts';
 import { annoncer, demanderAccord, demanderTexte } from './dialogues.ts';
@@ -1353,6 +1355,67 @@ async function ouvrirEnLigne() {
 
 const nomFichier = (extension: string) => `plan-${projet.nom.replace(/[^\p{L}\p{N}]+/gu, '-')}.${extension}`;
 
+// ---------- Élévations : chaque mur de pièce vu de face (src/elevation.ts pour la géométrie) ----------
+// Équipements posés contre un mur ; v1 sans baignoire ni douche (appareils au sol) ni éléments au plafond.
+const contreUnMur = (o: Objet) => {
+  const s = SYMBOLES[o.type];
+  return !s.libre && !s.mural && !s.dimensions;
+};
+function facesDuPlan(): Face[] | null {
+  const e = projet.echelle;
+  if (!e || !cotesCache) return null;
+  const segments: Segment[] = [];
+  for (const l of projet.liaisons.filter((l) => l.type === 'cloison')) {
+    const demi = styleLiaison('cloison', l.props).strokeWidth / 2;
+    for (let i = 2; i < l.points.length; i += 2) segments.push({ x1: l.points[i - 2], y1: l.points[i - 1], x2: l.points[i], y2: l.points[i + 1], demi });
+  }
+  const ouvertures = projet.objets.filter((o) => SYMBOLES[o.type].mural).map((o) => ({ id: o.id, x: o.x, y: o.y, rot: o.rot, largeur: nombre(o.props.largeur, SYMBOLES[o.type].mural!) / 100 / e }));
+  // Même portée qu'à la pose (plaquerAuMur) : le centre d'un symbole plaqué est à une demi-boîte de la face du mur.
+  return elevations(segments, ouvertures, projet.objets.filter(contreUnMur), cotesCache.numero, e, 1.5 * B * projet.taille);
+}
+const VUES = { haut: 'mur du haut', bas: 'mur du bas', gauche: 'mur de gauche', droite: 'mur de droite' };
+function dessinFace(f: Face) {
+  const salle = cotesCache?.salles.find((s) => s.num === f.piece), type = salle && typePiece(salle);
+  const titre = `P${f.piece}${type ? ` · ${TYPES_PIECES[type]}` : ''} — ${VUES[f.vue]} sur le plan`;
+  const sousTitre = `${projet.nom} · longueur ${m2(f.longueur)} m · hauteur sous plafond ${m2(hsp())} m · vu depuis la pièce`;
+  const elements = f.elements.map(({ id, abscisse }) => {
+    const o = projet.objets.find((o) => o.id === id)!, s = SYMBOLES[o.type], h = nombre(o.props.hauteur, 0);
+    return { abscisse, hauteur: h ? h / 100 : null, nom: s.nom, repere: o.props.repere, couleur: couleurs[s.calque], d: s.d, texte: s.texte };
+  });
+  const ouv = f.ouvertures.map(({ id, debut, fin }) => {
+    const o = projet.objets.find((o) => o.id === id)!;
+    return { debut, fin, type: o.type, nom: SYMBOLES[o.type].nom };
+  });
+  return dessinerElevation(titre, sousTitre, f.longueur, hsp(), elements, ouv);
+}
+async function pdfFaces(faces: Face[], prefixe: string) {
+  const pages = await Promise.all(
+    faces.map(async (f) => {
+      const c = dessinFace(f);
+      const jpeg = await new Promise<Blob | null>((ok) => c.toBlob(ok, 'image/jpeg', 0.9));
+      return { jpeg: new Uint8Array(await jpeg!.arrayBuffer()), largeur: c.width, hauteur: c.height };
+    }),
+  );
+  const url = URL.createObjectURL(new Blob([pdfDepuisJpegs(pages)], { type: 'application/pdf' }));
+  telecharger(url, nomFichier('pdf').replace('plan-', prefixe));
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+/** Tous les murs de pièce qui portent au moins un équipement, une page chacun, dans l'ordre des pièces. */
+function exporterElevations() {
+  if (!projet.echelle) return annoncer("Calibrez d'abord l'échelle du plan : les élévations sont cotées en mètres.");
+  const faces = facesDuPlan()?.filter((f) => f.elements.length).sort((a, b) => a.piece - b.piece || a.vue.localeCompare(b.vue));
+  if (!faces?.length) return annoncer("Aucun équipement posé contre un mur de pièce : rien à mettre en élévation.");
+  pdfFaces(faces, 'elevations-');
+}
+function voirElevation(id: number) {
+  if (!projet.echelle) return annoncer("Calibrez d'abord l'échelle du plan : les élévations sont cotées en mètres.");
+  const f = facesDuPlan()?.find((f) => f.elements.some((x) => x.id === id));
+  if (!f) return annoncer("Cet équipement n'est rattaché à aucun mur de pièce : trop loin d'une cloison, ou pièce non fermée.");
+  $<HTMLImageElement>('elevation-img').src = dessinFace(f).toDataURL('image/png');
+  $('b-elevation-pdf').onclick = () => pdfFaces([f], 'elevation-');
+  $<HTMLDialogElement>('elevation').showModal();
+}
+
 // Image de l'étage affiché, en pixels du plan. Seuls les calques visibles y figurent :
 // un export par corps de métier se fait en cochant/décochant.
 function imagePlan(pixelRatio: number) {
@@ -1516,6 +1579,7 @@ function majProps() {
   actions.append(
     ...(liaison ? [] : [bouton('pivoter', 'Pivoter', 'Pivoter (R)')]),
     ...(!liaison && SYMBOLES[c.type].mural ? [bouton('miroir', 'Inverser les gonds', 'Inverser les gonds (M)')] : []),
+    ...(!liaison && contreUnMur(c as Objet) ? [bouton('elevation', 'Élévation du mur', 'Le mur de la pièce vu de face, avec ses équipements')] : []),
     bouton('dupliquer', 'Dupliquer', 'Dupliquer (Ctrl+D)'),
     bouton('supprimer', 'Supprimer', 'Supprimer (Suppr)', 'danger'),
   );
@@ -1672,6 +1736,7 @@ $('props').addEventListener('click', (e) => {
   else if (action === 'dupliquer' && cible()) coller(cible()!, null);
   else if (action === 'pivoter') pivoterSelection();
   else if (action === 'miroir') inverserGonds();
+  else if (action === 'elevation' && selection !== null) voirElevation(selection);
   else if (action === 'relier' || action === 'relier-pole') {
     const a = projet.objets.find((o) => o.id === selection);
     if (!a) return;
@@ -1745,6 +1810,8 @@ $('b-pdf').onclick = exporterPdf;
 $('b-csv').onclick = exporterCsv;
 $('b-unifilaire').onclick = schemaUnifilaire;
 $('b-devis').onclick = exporterDevis;
+$('b-elevations').onclick = exporterElevations;
+$('b-elevation-fermer').onclick = () => $<HTMLDialogElement>('elevation').close();
 $('b-imprimer').onclick = imprimer;
 
 $('etage').onchange = (e) => changerEtage(Number((e.target as HTMLSelectElement).value));

@@ -87,6 +87,9 @@
       #plans-en-ligne li { display: flex; gap: 8px; margin: 4px 0; }
       #plans-en-ligne li button:first-child { flex: 1; text-align: left; }
       #plans-en-ligne .actions { display: flex; justify-content: flex-end; margin-top: 12px; }
+      #elevation { width: min(1100px, 95vw); }
+      #elevation img { display: block; width: 100%; border: 1px solid #e5e7eb; }
+      #elevation .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
       #saisie { width: min(420px, 90vw); }
       #saisie p { margin: 0 0 10px; }
       #saisie .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 12px; }
@@ -181,6 +184,7 @@
       <details>
         <summary>Pièces</summary>
         <ul id="pieces" class="liste"></ul>
+        <button id="b-elevations" class="pleine" title="Chaque mur de pièce équipé, vu de face avec ses équipements cotés : une page par mur">Élévations des murs (PDF)</button>
       </details>
       <details>
         <summary>Métré et devis</summary>
@@ -221,6 +225,10 @@
         <div class="actions"><button type="button" id="saisie-annuler">Annuler</button><button id="saisie-ok" class="principal" value="ok">OK</button></div>
       </form>
     </dialog>
+    <dialog id="elevation" aria-label="Élévation du mur">
+      <img id="elevation-img" alt="Élévation du mur" />
+      <div class="actions"><button id="b-elevation-pdf" class="principal">Télécharger en PDF</button><button id="b-elevation-fermer">Fermer</button></div>
+    </dialog>
     <dialog id="aide" aria-labelledby="aide-titre">
       <h2 id="aide-titre">Raccourcis et gestes</h2>
       <dl>
@@ -232,6 +240,7 @@
         <dt>Retour arrière</dt><dd>Pendant un tracé : retirer le dernier point</dd>
         <dt>Maj+clic · Maj+glisser sur le fond</dt><dd>Sélectionner plusieurs éléments (un par un · au cadre), pour les déplacer, les supprimer ou changer leur circuit</dd>
         <dt>Flèches · Maj+flèches</dt><dd>Décaler la sélection de 1 cm · 10 cm</dd>
+        <dt>Élévation du mur</dt><dd>Sur un équipement sélectionné : son mur vu de face, coté (Vérifier → Pièces : tous les murs en PDF)</dd>
         <dt>R · M</dt><dd>Pivoter · inverser les gonds d'une porte</dd>
         <dt>Double-clic · tirer ● · double-clic ○</dt><dd>Sur un tracé sélectionné : ajouter un point où l'on veut · ajouter un coude au milieu · retirer un point ; Maj en tirant = aligner</dd>
         <dt>Relier à… · Relier au tableau</dt><dd>Sur un équipement sélectionné : câble ou tuyau tracé automatiquement le long des murs</dd>
